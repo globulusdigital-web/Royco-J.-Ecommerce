@@ -3,7 +3,7 @@ import { access, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createApiHandler } from "../netlify/lib/api-handler.mjs";
+import { createApiHandler } from "../backend/lib/api-handler.mjs";
 import { getLocalRepository } from "./repository.mjs";
 import { getLocalFileStorage } from "./storage.mjs";
 import { HttpBridgeError, toWebRequest, writeWebResponse } from "./http-bridge.mjs";

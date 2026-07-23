@@ -3,14 +3,14 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fallbackProducts, fallbackPromotions } from "../src/data/fallbackProducts.js";
-import { ApiError } from "../netlify/lib/http.mjs";
+import { ApiError } from "../backend/lib/http.mjs";
 import {
   rupees,
   serializeOrder,
   serializeProduct,
   serializePromotion,
   serializeUser,
-} from "../netlify/lib/serializers.mjs";
+} from "../backend/lib/serializers.mjs";
 
 const LOCAL_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_STORE_PATH = resolve(LOCAL_DIRECTORY, "data", "store.json");
