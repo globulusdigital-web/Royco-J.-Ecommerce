@@ -1,15 +1,7 @@
-export function createBlobStorage(store) {
-  return {
-    async put(key, file, metadata) {
-      await store.set(key, file, { metadata });
-    },
-    async get(key) {
-      return store.getWithMetadata(key, { type: "arrayBuffer", consistency: "strong" });
-    },
-  };
-}
+import path from "node:path";
 
 export async function getProductionBlobStorage() {
-  const { getStore } = await import("@netlify/blobs");
-  return createBlobStorage(getStore({ name: "royco-product-images", consistency: "strong" }));
+  const uploadsDir = process.env.ROYCO_UPLOADS_DIR || path.join(process.cwd(), "local-server", "uploads");
+  const { getLocalFileStorage } = await import("../../local-server/storage.mjs");
+  return getLocalFileStorage({ uploadsDir });
 }

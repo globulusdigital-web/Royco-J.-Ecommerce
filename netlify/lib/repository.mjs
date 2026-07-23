@@ -510,6 +510,13 @@ export function createDatabaseRepository(db) {
 }
 
 export async function getProductionRepository() {
-  const { getDatabase } = await import("@netlify/database");
-  return createDatabaseRepository(getDatabase());
+  const { Pool } = await import("pg");
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  });
+  pool.on("error", (error) => {
+    console.error("Render Postgres pool error", error);
+  });
+  return createDatabaseRepository({ pool });
 }

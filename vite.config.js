@@ -1,12 +1,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import netlify from "@netlify/vite-plugin";
 
-export default defineConfig(({ mode }) => ({
-  plugins: [
-    react(),
-    ...(mode === "frontend" ? [] : [netlify()]),
-  ],
+export default defineConfig({
+  plugins: [react()],
   server: {
     host: "127.0.0.1",
     port: 4173,
@@ -19,4 +15,4 @@ export default defineConfig(({ mode }) => ({
     target: "es2022",
     sourcemap: false,
   },
-}));
+});

@@ -1,12 +1,12 @@
-# Royco Jewellers — complete Netlify ecommerce system
+# Royco Jewellers — Render-ready ecommerce system
 
-A production-structured, JavaScript-only jewellery storefront for Royco Jewellers, Chandannagar. It recreates the requested admin/customer capabilities of the referenced PHP/MySQL project using services that Netlify can actually run:
+A production-structured, JavaScript-only jewellery storefront for Royco Jewellers, Chandannagar. It recreates the requested admin/customer capabilities of the referenced PHP/MySQL project using a Render-native Node runtime:
 
 - React + Vite storefront, responsive from mobile to desktop
 - Three.js animated 3D hero with reduced-motion support
-- Netlify Functions JavaScript API
-- Netlify Database (managed Postgres) for customers, products, promotions, orders, inventory, sessions and audit records
-- Netlify Blobs for administrator product-image uploads
+- Node server API with the same customer/admin workflow contract
+- Postgres-backed repository for customers, products, promotions, orders, inventory, sessions and audit records
+- Persistent uploads on the Render disk volume
 - Server-side customer/admin authentication, signed HttpOnly sessions and role checks
 - SQL migrations with a complete seeded Royco catalogue
 
@@ -58,15 +58,15 @@ be opened through the local server. `pnpm dev:frontend` remains available for a
 frontend-only hot-reload preview. `pnpm dev:netlify` starts Netlify's emulator
 when the workspace supports symlinks.
 
-Database migrations are only needed for a Netlify deployment:
+Database migrations are applied automatically by the Render startup path:
 
 ```bash
-pnpm db:apply
+node scripts/apply-migrations.mjs
 ```
 
-## Deploy to Netlify
+## Deploy to Render
 
-See [NETLIFY_DEPLOY.md](./NETLIFY_DEPLOY.md) for the exact launch checklist. Deploy the source project (not only `dist`) so Netlify can build the functions, create the database, apply migrations and connect Blob storage.
+Use the included [render.yaml](./render.yaml) to deploy the source project to Render with a Node web service, a Postgres database and a persistent disk mount.
 
 ## Security before launch
 

@@ -11,6 +11,7 @@ import { HttpBridgeError, toWebRequest, writeWebResponse } from "./http-bridge.m
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultProjectRoot = path.resolve(moduleDirectory, "..");
 const DEFAULT_HOST = "127.0.0.1";
+const DEFAULT_PRODUCTION_HOST = "0.0.0.0";
 const DEFAULT_PORT = 4173;
 const LOCAL_SESSION_SECRET = "royco-local-session-secret-2026-change-for-production";
 
@@ -130,8 +131,8 @@ export function createLocalApp({
   port = DEFAULT_PORT,
   projectRoot = defaultProjectRoot,
   distDir = path.join(projectRoot, "dist"),
-  uploadsDir = path.join(projectRoot, "local-server", "uploads"),
-  storePath = path.join(projectRoot, "local-server", "data", "store.json"),
+  uploadsDir = process.env.ROYCO_UPLOADS_DIR || path.join(projectRoot, "local-server", "uploads"),
+  storePath = process.env.ROYCO_STORE_PATH || path.join(projectRoot, "local-server", "data", "store.json"),
   env = developmentEnvironment(),
   dependencies,
 } = {}) {
@@ -220,7 +221,7 @@ export function createLocalApp({
 }
 
 export async function start(options = {}) {
-  const hostname = options.hostname || process.env.HOST || DEFAULT_HOST;
+  const hostname = options.hostname || process.env.HOST || (process.env.NODE_ENV === "production" ? DEFAULT_PRODUCTION_HOST : DEFAULT_HOST);
   const configuredPort = Number(options.port ?? process.env.PORT ?? DEFAULT_PORT);
   const port = Number.isInteger(configuredPort) && configuredPort >= 0 && configuredPort <= 65535 ? configuredPort : DEFAULT_PORT;
   const server = createLocalApp({ ...options, hostname, port });

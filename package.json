@@ -6,28 +6,22 @@
   "scripts": {
     "dev": "vite build && node local-server/app.mjs",
     "start": "node local-server/app.mjs",
-    "dev:netlify": "vite",
     "dev:frontend": "vite --mode frontend",
     "build": "vite build",
     "preview": "node local-server/app.mjs",
     "test": "node --test --test-isolation=none tests/*.test.mjs local-server/*.test.mjs",
-    "check": "pnpm test && pnpm build",
-    "db:apply": "netlify database migrations apply",
-    "db:status": "netlify database status"
+    "check": "pnpm test && pnpm build"
   },
   "dependencies": {
-    "@netlify/blobs": "latest",
-    "@netlify/database": "latest",
     "lucide-react": "latest",
+    "pg": "latest",
     "react": "latest",
     "react-dom": "latest",
     "react-router-dom": "latest",
     "three": "latest"
   },
   "devDependencies": {
-    "@netlify/vite-plugin": "latest",
     "@vitejs/plugin-react": "latest",
-    "netlify-cli": "latest",
     "vite": "latest"
   },
   "engines": {
