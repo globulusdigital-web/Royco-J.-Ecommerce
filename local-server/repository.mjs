@@ -6,6 +6,7 @@ import { fallbackProducts, fallbackPromotions } from "../src/data/fallbackProduc
 import { ApiError } from "../backend/lib/http.mjs";
 import {
   rupees,
+  serializeAppointment,
   serializeOrder,
   serializeProduct,
   serializePromotion,
@@ -86,7 +87,7 @@ function seedPromotion(promotion, index, createdAt) {
 export function createSeedStore(now = new Date()) {
   const createdAt = nowIso(now);
   return {
-    schema_version: 1,
+    schema_version: 2,
     next_product_id: fallbackProducts.length + 1,
     next_order_item_id: 1,
     next_audit_id: 1,
@@ -96,6 +97,8 @@ export function createSeedStore(now = new Date()) {
     promotions: fallbackPromotions.map((promotion, index) => seedPromotion(promotion, index, createdAt)),
     orders: [],
     order_items: [],
+    appointments: [],
+    payment_intents: [],
     audit_logs: [],
     created_at: createdAt,
     updated_at: createdAt,
@@ -104,7 +107,17 @@ export function createSeedStore(now = new Date()) {
 
 function normalizeLoadedStore(value) {
   if (!value || typeof value !== "object") throw new Error("Local store is not a JSON object");
-  const lists = ["users", "sessions", "products", "promotions", "orders", "order_items", "audit_logs"];
+  const lists = [
+    "users",
+    "sessions",
+    "products",
+    "promotions",
+    "orders",
+    "order_items",
+    "appointments",
+    "payment_intents",
+    "audit_logs",
+  ];
   for (const key of lists) {
     if (!Array.isArray(value[key])) value[key] = [];
   }
@@ -163,6 +176,49 @@ function promotionIsActive(promotion, now = new Date()) {
 
 function descendingCreated(left, right) {
   return String(right.created_at || "").localeCompare(String(left.created_at || ""));
+}
+
+function calculateLocalQuote(store, items, couponCode, now = new Date()) {
+  const products = new Map(store.products.map((product) => [Number(product.id), product]));
+  if (new Set(items.map((item) => item.productId)).size !== items.length
+    || items.some((item) => !products.has(item.productId))) {
+    throw new ApiError(409, "product_unavailable", "One or more products are no longer available");
+  }
+
+  let subtotalPaise = 0;
+  for (const item of items) {
+    const product = products.get(item.productId);
+    if (!product.active || Number(product.stock) < item.quantity) {
+      throw new ApiError(409, "insufficient_stock", `${product?.name || "A product"} does not have enough stock`);
+    }
+    subtotalPaise += Number(product.price_paise) * item.quantity;
+  }
+
+  let promotion = null;
+  let discountPaise = 0;
+  if (couponCode) {
+    promotion = store.promotions.find((row) => row.code === couponCode && promotionIsActive(row, now));
+    if (!promotion || subtotalPaise < Number(promotion.min_order_paise || 0)) {
+      throw new ApiError(422, "promotion_invalid", "That offer is not active for this order");
+    }
+    discountPaise = promotion.discount_type === "percent"
+      ? Math.round(subtotalPaise * Number(promotion.discount_value) / 100)
+      : Number(promotion.discount_value);
+    if (promotion.max_discount_paise != null) {
+      discountPaise = Math.min(discountPaise, Number(promotion.max_discount_paise));
+    }
+    discountPaise = Math.min(discountPaise, subtotalPaise);
+  }
+
+  const shippingPaise = subtotalPaise - discountPaise >= 5_000_000 ? 0 : 49_900;
+  return {
+    products,
+    promotion,
+    subtotalPaise,
+    discountPaise,
+    shippingPaise,
+    totalPaise: subtotalPaise - discountPaise + shippingPaise,
+  };
 }
 
 /**
@@ -227,6 +283,13 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
       return user ? clone(user) : null;
     },
 
+    async getUserByPhone(phoneNormalized) {
+      const store = await readState();
+      const user = store.users.find((row) => row.active !== false
+        && row.phone_normalized === phoneNormalized);
+      return user ? clone(user) : null;
+    },
+
     async createUser({ id, email, emailNormalized, name, phone, passwordHash }) {
       return mutate((store) => {
         if (store.users.some((row) => row.email_normalized === emailNormalized)) {
@@ -237,6 +300,30 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
           id, email, email_normalized: String(emailNormalized).toLowerCase(), name, phone,
           password_hash: passwordHash, role: "customer", active: true,
           created_at: createdAt, updated_at: createdAt,
+        };
+        store.users.push(user);
+        return clone(user);
+      });
+    },
+
+    async createOtpUser({ id, name, phone, phoneNormalized }) {
+      return mutate((store) => {
+        if (store.users.some((row) => row.phone_normalized === phoneNormalized)) {
+          throw uniqueViolation("A user with that mobile number already exists");
+        }
+        const createdAt = nowIso();
+        const user = {
+          id,
+          email: null,
+          email_normalized: null,
+          name,
+          phone,
+          phone_normalized: phoneNormalized,
+          password_hash: null,
+          role: "customer",
+          active: true,
+          created_at: createdAt,
+          updated_at: createdAt,
         };
         store.users.push(user);
         return clone(user);
@@ -416,49 +503,152 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
       });
     },
 
-    async checkout({ user, items, couponCode, paymentMethod, shippingAddress, now = new Date() }) {
+    async quoteCheckout({ items, couponCode, now = new Date() }) {
+      const store = await readState();
+      const quote = calculateLocalQuote(store, items, couponCode, now);
+      return {
+        subtotalPaise: quote.subtotalPaise,
+        discountPaise: quote.discountPaise,
+        shippingPaise: quote.shippingPaise,
+        totalPaise: quote.totalPaise,
+        promoCode: quote.promotion?.code || null,
+      };
+    },
+
+    async createPaymentIntent({ id, userId, providerOrderId, amountPaise, checkoutPayload }) {
       return mutate((store) => {
-        const products = new Map(store.products.map((product) => [Number(product.id), product]));
-        if (new Set(items.map((item) => item.productId)).size !== items.length
-          || items.some((item) => !products.has(item.productId))) {
-          throw new ApiError(409, "product_unavailable", "One or more products are no longer available");
+        if (store.payment_intents.some((row) => row.provider_order_id === providerOrderId)) {
+          throw uniqueViolation("Payment order already exists");
         }
+        const createdAt = nowIso();
+        const intent = {
+          id,
+          user_id: userId,
+          provider: "razorpay",
+          provider_order_id: providerOrderId,
+          amount_paise: amountPaise,
+          currency: "INR",
+          checkout_payload: clone(checkoutPayload),
+          status: "created",
+          provider_payment_id: null,
+          completed_order_id: null,
+          created_at: createdAt,
+          updated_at: createdAt,
+        };
+        store.payment_intents.push(intent);
+        return clone(intent);
+      });
+    },
 
-        let subtotalPaise = 0;
-        for (const item of items) {
-          const product = products.get(item.productId);
-          if (!product.active || Number(product.stock) < item.quantity) {
-            throw new ApiError(409, "insufficient_stock", `${product?.name || "A product"} does not have enough stock`);
-          }
-          subtotalPaise += Number(product.price_paise) * item.quantity;
+    async getPaymentIntent(providerOrderId, userId) {
+      const store = await readState();
+      const intent = store.payment_intents.find((row) => row.provider_order_id === providerOrderId
+        && String(row.user_id) === String(userId));
+      return intent ? { ...clone(intent), checkoutPayload: clone(intent.checkout_payload) } : null;
+    },
+
+    async completePaymentIntent(providerOrderId, paymentId, orderId) {
+      return mutate((store) => {
+        const intent = store.payment_intents.find((row) => row.provider_order_id === providerOrderId);
+        if (!intent) return;
+        intent.status = "paid";
+        intent.provider_payment_id = paymentId;
+        intent.completed_order_id = orderId;
+        intent.updated_at = nowIso();
+      });
+    },
+
+    async appointmentAvailability(startIso, endIso) {
+      const store = await readState();
+      const start = new Date(startIso).valueOf();
+      const end = new Date(endIso).valueOf();
+      return store.appointments
+        .filter((row) => row.status !== "cancelled")
+        .filter((row) => {
+          const timestamp = new Date(row.scheduled_at).valueOf();
+          return timestamp >= start && timestamp < end;
+        })
+        .map((row) => row.scheduled_at);
+    },
+
+    async createAppointment({ id, user, service, scheduledAt, language, notes }) {
+      return mutate((store) => {
+        if (store.appointments.some((row) => row.status !== "cancelled"
+          && new Date(row.scheduled_at).valueOf() === new Date(scheduledAt).valueOf())) {
+          throw new ApiError(409, "appointment_unavailable", "That appointment time was just booked. Please choose another.");
         }
+        const createdAt = nowIso();
+        const appointment = {
+          id,
+          user_id: user.id,
+          customer_name: user.name,
+          customer_phone: user.phone,
+          service,
+          scheduled_at: scheduledAt,
+          duration_minutes: 45,
+          language,
+          notes,
+          status: "requested",
+          created_at: createdAt,
+          updated_at: createdAt,
+        };
+        store.appointments.push(appointment);
+        return serializeAppointment(appointment);
+      });
+    },
 
-        let promotion = null;
-        let discountPaise = 0;
-        if (couponCode) {
-          promotion = store.promotions.find((row) => row.code === couponCode && promotionIsActive(row, now));
-          if (!promotion || subtotalPaise < Number(promotion.min_order_paise || 0)) {
-            throw new ApiError(422, "promotion_invalid", "That offer is not active for this order");
-          }
-          discountPaise = promotion.discount_type === "percent"
-            ? Math.round(subtotalPaise * Number(promotion.discount_value) / 100)
-            : Number(promotion.discount_value);
-          if (promotion.max_discount_paise != null) {
-            discountPaise = Math.min(discountPaise, Number(promotion.max_discount_paise));
-          }
-          discountPaise = Math.min(discountPaise, subtotalPaise);
-        }
+    async listAppointmentsForUser(userId) {
+      const store = await readState();
+      return store.appointments
+        .filter((row) => String(row.user_id) === String(userId))
+        .sort((left, right) => String(right.scheduled_at).localeCompare(String(left.scheduled_at)))
+        .map(serializeAppointment);
+    },
 
-        const shippingPaise = subtotalPaise - discountPaise >= 5_000_000 ? 0 : 49_900;
-        const totalPaise = subtotalPaise - discountPaise + shippingPaise;
+    async listAppointmentsAdmin() {
+      const store = await readState();
+      return store.appointments
+        .slice()
+        .sort((left, right) => String(right.scheduled_at).localeCompare(String(left.scheduled_at)))
+        .map(serializeAppointment);
+    },
+
+    async updateAppointmentStatus(id, status) {
+      return mutate((store) => {
+        const appointment = store.appointments.find((row) => String(row.id) === String(id));
+        if (!appointment) return null;
+        appointment.status = status;
+        appointment.updated_at = nowIso();
+        return serializeAppointment(appointment);
+      });
+    },
+
+    async checkout({
+      user,
+      items,
+      couponCode,
+      paymentMethod,
+      shippingAddress,
+      razorpayOrderId = null,
+      razorpayPaymentId = null,
+      now = new Date(),
+    }) {
+      return mutate((store) => {
+        const quote = calculateLocalQuote(store, items, couponCode, now);
+        const {
+          products, promotion, subtotalPaise, discountPaise, shippingPaise, totalPaise,
+        } = quote;
         const timestamp = nowIso(now);
         const order = {
           id: randomUUID(), order_number: makeOrderNumber(now), user_id: user.id, status: "pending",
           subtotal_paise: subtotalPaise, discount_paise: discountPaise,
           shipping_paise: shippingPaise, total_paise: totalPaise,
           promo_code: promotion?.code || null, customer_name: shippingAddress.name,
-          customer_email: user.email, customer_phone: shippingAddress.phone,
+          customer_email: user.email || "", customer_phone: shippingAddress.phone,
           shipping_address: clone(shippingAddress), payment_method: paymentMethod,
+          payment_status: paymentMethod === "razorpay" ? "paid" : "pending",
+          razorpay_order_id: razorpayOrderId,
+          razorpay_payment_id: razorpayPaymentId,
           notes: shippingAddress.instructions || "", cancelled_at: null,
           created_at: timestamp, updated_at: timestamp,
         };
@@ -596,6 +786,9 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
           active_products: store.products.filter((product) => product.active !== false).length,
           low_stock: store.products.filter((product) => product.active !== false && Number(product.stock) < 5).length,
           customers: store.users.filter((user) => user.role === "customer" && user.active !== false).length,
+          upcoming_appointments: store.appointments.filter((appointment) =>
+            ["requested", "confirmed"].includes(appointment.status)
+            && new Date(appointment.scheduled_at).valueOf() >= Date.now()).length,
         },
         recentOrders: store.orders.slice().sort(descendingCreated).slice(0, 5)
           .map((order) => serializeOrderFromStore(store, order)),
@@ -613,6 +806,8 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
         promotions: store.promotions.length,
         orders: store.orders.length,
         order_items: store.order_items.length,
+        appointments: store.appointments.length,
+        payment_intents: store.payment_intents.length,
         audit_logs: store.audit_logs.length,
       };
       return {

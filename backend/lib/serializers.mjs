@@ -11,11 +11,29 @@ export function serializeUser(row) {
   if (!row) return null;
   return {
     id: String(row.id),
-    email: row.email,
+    email: row.email || "",
     name: row.name,
     phone: row.phone || "",
     role: row.role,
     createdAt: row.created_at || row.createdAt,
+  };
+}
+
+export function serializeAppointment(row) {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    userId: String(row.user_id || row.userId || ""),
+    customerName: row.customer_name || row.customerName || "",
+    customerPhone: row.customer_phone || row.customerPhone || "",
+    service: row.service,
+    scheduledAt: row.scheduled_at || row.scheduledAt,
+    durationMinutes: number(row.duration_minutes ?? row.durationMinutes, 45),
+    language: row.language || "Bengali",
+    notes: row.notes || "",
+    status: row.status || "requested",
+    createdAt: row.created_at || row.createdAt,
+    updatedAt: row.updated_at || row.updatedAt,
   };
 }
 
@@ -106,6 +124,9 @@ export function serializeOrder(row, itemRows = row?.items || []) {
     customerPhone: row.customer_phone,
     shippingAddress: row.shipping_address || {},
     paymentMethod,
+    paymentStatus: row.payment_status || "pending",
+    razorpayOrderId: row.razorpay_order_id || null,
+    razorpayPaymentId: row.razorpay_payment_id || null,
     notes: row.notes || "",
     itemCount: number(row.item_count, itemRows.reduce((sum, item) => sum + number(item.quantity, 1), 0)),
     items: itemRows.map(serializeOrderItem),

@@ -35,7 +35,17 @@ services:
       - key: ADMIN_USER
         value: Admin@Royco
       - key: ADMIN_PASSWORD
-        value: Admin@123
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_VERIFY_SERVICE_SID
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
       - key: PUBLIC_SITE_URL
         value: https://your-render-app.onrender.com
 

@@ -131,6 +131,20 @@ export function StoreProvider({ children }) {
     return nextUser;
   }, [notify]);
 
+  const requestOtp = useCallback(async (phone) => {
+    const payload = await api("/api/auth/otp/request", { method: "POST", body: { phone } });
+    notify(`Verification code sent to ${payload.maskedPhone}.`, "info");
+    return payload;
+  }, [notify]);
+
+  const verifyOtp = useCallback(async (details) => {
+    const payload = await api("/api/auth/otp/verify", { method: "POST", body: details });
+    const nextUser = payload?.user ?? payload;
+    setUser(nextUser);
+    notify(`Welcome${nextUser?.name ? `, ${nextUser.name.split(" ")[0]}` : ""}.`);
+    return nextUser;
+  }, [notify]);
+
   const logout = useCallback(async () => {
     try {
       await api("/api/auth/logout", { method: "POST" });
@@ -154,6 +168,8 @@ export function StoreProvider({ children }) {
     refreshAuth,
     login,
     signup,
+    requestOtp,
+    verifyOtp,
     logout,
     cart,
     cartCount,
@@ -167,7 +183,7 @@ export function StoreProvider({ children }) {
     toast,
     setToast,
     notify,
-  }), [products, promotions, catalogLoading, usingPreviewData, loadCatalog, user, authLoading, refreshAuth, login, signup, logout, cart, cartCount, cartSubtotal, cartOpen, addToCart, updateCart, removeFromCart, clearCart, toast, notify]);
+  }), [products, promotions, catalogLoading, usingPreviewData, loadCatalog, user, authLoading, refreshAuth, login, signup, requestOtp, verifyOtp, logout, cart, cartCount, cartSubtotal, cartOpen, addToCart, updateCart, removeFromCart, clearCart, toast, notify]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

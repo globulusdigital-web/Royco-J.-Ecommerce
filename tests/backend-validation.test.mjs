@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { apiPath, salesCsv, validateCheckout, validateProduct, validatePromotion } from "../netlify/lib/api-handler.mjs";
+import { apiPath, salesCsv, validateCheckout, validateProduct, validatePromotion } from "../backend/lib/api-handler.mjs";
 
 test("apiPath supports both redirected and direct Netlify function URLs", () => {
   assert.equal(apiPath("https://example.test/api/products"), "/products");

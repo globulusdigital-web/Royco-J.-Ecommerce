@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ApiError } from "./http.mjs";
 import {
+  serializeAppointment,
   serializeOrder,
   serializeProduct,
   serializePromotion,
@@ -45,6 +46,61 @@ export function createDatabaseRepository(db) {
     return orderRows.map((order) => serializeOrder(order, itemMap.get(String(order.id)) || []));
   }
 
+  async function calculateQuote(database, items, couponCode, { lock = false } = {}) {
+    const productIds = items.map((item) => item.productId);
+    const productResult = await database.query(
+      `SELECT * FROM products WHERE id = ANY($1::int[])${lock ? " FOR UPDATE" : ""}`,
+      [productIds],
+    );
+    const products = new Map(resultRows(productResult).map((product) => [Number(product.id), product]));
+    if (products.size !== productIds.length) {
+      throw new ApiError(409, "product_unavailable", "One or more products are no longer available");
+    }
+
+    let subtotalPaise = 0;
+    for (const item of items) {
+      const product = products.get(item.productId);
+      if (!product.active || Number(product.stock) < item.quantity) {
+        throw new ApiError(409, "insufficient_stock", `${product?.name || "A product"} does not have enough stock`);
+      }
+      subtotalPaise += Number(product.price_paise) * item.quantity;
+    }
+
+    let promotion = null;
+    let discountPaise = 0;
+    if (couponCode) {
+      const promotionResult = await database.query(
+        `SELECT * FROM promotions
+         WHERE code = $1 AND active = TRUE
+           AND (starts_at IS NULL OR starts_at <= NOW())
+           AND (ends_at IS NULL OR ends_at > NOW())
+         LIMIT 1`,
+        [couponCode],
+      );
+      promotion = resultRows(promotionResult)[0];
+      if (!promotion || subtotalPaise < Number(promotion.min_order_paise)) {
+        throw new ApiError(422, "promotion_invalid", "That offer is not active for this order");
+      }
+      discountPaise = promotion.discount_type === "percent"
+        ? Math.round(subtotalPaise * Number(promotion.discount_value) / 100)
+        : Number(promotion.discount_value);
+      if (promotion.max_discount_paise != null) {
+        discountPaise = Math.min(discountPaise, Number(promotion.max_discount_paise));
+      }
+      discountPaise = Math.min(discountPaise, subtotalPaise);
+    }
+
+    const shippingPaise = subtotalPaise - discountPaise >= 5_000_000 ? 0 : 49_900;
+    return {
+      products,
+      promotion,
+      subtotalPaise,
+      discountPaise,
+      shippingPaise,
+      totalPaise: subtotalPaise - discountPaise + shippingPaise,
+    };
+  }
+
   return {
     async ping() {
       const result = await query("SELECT 1 AS ok");
@@ -64,12 +120,30 @@ export function createDatabaseRepository(db) {
       return resultRows(result)[0] || null;
     },
 
+    async getUserByPhone(phoneNormalized) {
+      const result = await query(
+        "SELECT * FROM users WHERE phone_normalized = $1 AND active = TRUE LIMIT 1",
+        [phoneNormalized],
+      );
+      return resultRows(result)[0] || null;
+    },
+
     async createUser({ id, email, emailNormalized, name, phone, passwordHash }) {
       const result = await query(
         `INSERT INTO users (id, email, email_normalized, name, phone, password_hash, role)
          VALUES ($1, $2, $3, $4, $5, $6, 'customer')
          RETURNING *`,
         [id, email, emailNormalized, name, phone, passwordHash],
+      );
+      return resultRows(result)[0];
+    },
+
+    async createOtpUser({ id, name, phone, phoneNormalized }) {
+      const result = await query(
+        `INSERT INTO users (id, email, email_normalized, name, phone, phone_normalized, password_hash, role)
+         VALUES ($1, NULL, NULL, $2, $3, $4, NULL, 'customer')
+         RETURNING *`,
+        [id, name, phone, phoneNormalized],
       );
       return resultRows(result)[0];
     },
@@ -239,67 +313,121 @@ export function createDatabaseRepository(db) {
       return rowCount(result) > 0;
     },
 
-    async checkout({ user, items, couponCode, paymentMethod, shippingAddress, now = new Date() }) {
+    async quoteCheckout({ items, couponCode }) {
+      const quote = await calculateQuote(pool, items, couponCode);
+      return {
+        subtotalPaise: quote.subtotalPaise,
+        discountPaise: quote.discountPaise,
+        shippingPaise: quote.shippingPaise,
+        totalPaise: quote.totalPaise,
+        promoCode: quote.promotion?.code || null,
+      };
+    },
+
+    async createPaymentIntent({ id, userId, providerOrderId, amountPaise, checkoutPayload }) {
+      const result = await query(
+        `INSERT INTO payment_intents
+          (id, user_id, provider_order_id, amount_paise, checkout_payload)
+         VALUES ($1, $2, $3, $4, $5::jsonb)
+         RETURNING *`,
+        [id, userId, providerOrderId, amountPaise, JSON.stringify(checkoutPayload)],
+      );
+      return resultRows(result)[0];
+    },
+
+    async getPaymentIntent(providerOrderId, userId) {
+      const result = await query(
+        "SELECT * FROM payment_intents WHERE provider_order_id = $1 AND user_id = $2 LIMIT 1",
+        [providerOrderId, userId],
+      );
+      const row = resultRows(result)[0];
+      if (!row) return null;
+      return { ...row, checkoutPayload: row.checkout_payload };
+    },
+
+    async completePaymentIntent(providerOrderId, paymentId, orderId) {
+      await query(
+        `UPDATE payment_intents SET status = 'paid', provider_payment_id = $2,
+           completed_order_id = $3, updated_at = NOW()
+         WHERE provider_order_id = $1`,
+        [providerOrderId, paymentId, orderId],
+      );
+    },
+
+    async appointmentAvailability(startIso, endIso) {
+      const result = await query(
+        `SELECT scheduled_at FROM appointments
+         WHERE scheduled_at >= $1 AND scheduled_at < $2 AND status <> 'cancelled'
+         ORDER BY scheduled_at`,
+        [startIso, endIso],
+      );
+      return resultRows(result).map((row) => row.scheduled_at);
+    },
+
+    async createAppointment({ id, user, service, scheduledAt, language, notes }) {
+      const result = await query(
+        `INSERT INTO appointments
+          (id, user_id, customer_name, customer_phone, service, scheduled_at, language, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [id, user.id, user.name, user.phone, service, scheduledAt, language, notes],
+      );
+      return serializeAppointment(resultRows(result)[0]);
+    },
+
+    async listAppointmentsForUser(userId) {
+      const result = await query(
+        "SELECT * FROM appointments WHERE user_id = $1 ORDER BY scheduled_at DESC LIMIT 100",
+        [userId],
+      );
+      return resultRows(result).map(serializeAppointment);
+    },
+
+    async listAppointmentsAdmin() {
+      const result = await query(
+        "SELECT * FROM appointments ORDER BY scheduled_at DESC LIMIT 1000",
+      );
+      return resultRows(result).map(serializeAppointment);
+    },
+
+    async updateAppointmentStatus(id, status) {
+      const result = await query(
+        "UPDATE appointments SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *",
+        [id, status],
+      );
+      return serializeAppointment(resultRows(result)[0]);
+    },
+
+    async checkout({
+      user,
+      items,
+      couponCode,
+      paymentMethod,
+      shippingAddress,
+      razorpayOrderId = null,
+      razorpayPaymentId = null,
+      now = new Date(),
+    }) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const productIds = items.map((item) => item.productId);
-        const productResult = await client.query(
-          "SELECT * FROM products WHERE id = ANY($1::int[]) FOR UPDATE",
-          [productIds],
-        );
-        const products = new Map(resultRows(productResult).map((product) => [Number(product.id), product]));
-        if (products.size !== productIds.length) {
-          throw new ApiError(409, "product_unavailable", "One or more products are no longer available");
-        }
-
-        let subtotalPaise = 0;
-        for (const item of items) {
-          const product = products.get(item.productId);
-          if (!product.active || Number(product.stock) < item.quantity) {
-            throw new ApiError(409, "insufficient_stock", `${product?.name || "A product"} does not have enough stock`);
-          }
-          subtotalPaise += Number(product.price_paise) * item.quantity;
-        }
-
-        let promotion = null;
-        let discountPaise = 0;
-        if (couponCode) {
-          const promotionResult = await client.query(
-            `SELECT * FROM promotions
-             WHERE code = $1 AND active = TRUE
-               AND (starts_at IS NULL OR starts_at <= NOW())
-               AND (ends_at IS NULL OR ends_at > NOW())
-             LIMIT 1`,
-            [couponCode],
-          );
-          promotion = resultRows(promotionResult)[0];
-          if (!promotion || subtotalPaise < Number(promotion.min_order_paise)) {
-            throw new ApiError(422, "promotion_invalid", "That offer is not active for this order");
-          }
-          discountPaise = promotion.discount_type === "percent"
-            ? Math.round(subtotalPaise * Number(promotion.discount_value) / 100)
-            : Number(promotion.discount_value);
-          if (promotion.max_discount_paise != null) {
-            discountPaise = Math.min(discountPaise, Number(promotion.max_discount_paise));
-          }
-          discountPaise = Math.min(discountPaise, subtotalPaise);
-        }
-
-        const shippingPaise = subtotalPaise - discountPaise >= 5_000_000 ? 0 : 49_900;
-        const totalPaise = subtotalPaise - discountPaise + shippingPaise;
+        const quote = await calculateQuote(client, items, couponCode, { lock: true });
+        const {
+          products, promotion, subtotalPaise, discountPaise, shippingPaise, totalPaise,
+        } = quote;
         const orderId = randomUUID();
         const orderNumber = makeOrderNumber(now);
         const orderResult = await client.query(
           `INSERT INTO orders
             (id, order_number, user_id, subtotal_paise, discount_paise, shipping_paise, total_paise,
              promo_code, customer_name, customer_email, customer_phone, shipping_address,
-             payment_method, notes)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
+             payment_method, payment_status, razorpay_order_id, razorpay_payment_id, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14, $15, $16, $17)
            RETURNING *`,
           [orderId, orderNumber, user.id, subtotalPaise, discountPaise, shippingPaise, totalPaise,
-            promotion?.code || null, shippingAddress.name, user.email, shippingAddress.phone,
-            JSON.stringify(shippingAddress), paymentMethod, shippingAddress.instructions || ""],
+            promotion?.code || null, shippingAddress.name, user.email || "", shippingAddress.phone,
+            JSON.stringify(shippingAddress), paymentMethod, paymentMethod === "razorpay" ? "paid" : "pending",
+            razorpayOrderId, razorpayPaymentId, shippingAddress.instructions || ""],
         );
 
         const itemRows = [];
@@ -430,7 +558,9 @@ export function createDatabaseRepository(db) {
           COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_orders,
           (SELECT COUNT(*)::int FROM products WHERE active = TRUE) AS active_products,
           (SELECT COUNT(*)::int FROM products WHERE active = TRUE AND stock < 5) AS low_stock,
-          (SELECT COUNT(*)::int FROM users WHERE role = 'customer' AND active = TRUE) AS customers
+          (SELECT COUNT(*)::int FROM users WHERE role = 'customer' AND active = TRUE) AS customers,
+          (SELECT COUNT(*)::int FROM appointments
+            WHERE status IN ('requested', 'confirmed') AND scheduled_at >= NOW()) AS upcoming_appointments
           FROM orders`),
         query("SELECT * FROM orders ORDER BY created_at DESC LIMIT 5"),
         query(`SELECT p.id, p.name, p.image_url, COALESCE(SUM(oi.quantity), 0)::int AS units,
@@ -452,6 +582,7 @@ export function createDatabaseRepository(db) {
           active_products: Number(metricsRow.active_products || 0),
           low_stock: Number(metricsRow.low_stock || 0),
           customers: Number(metricsRow.customers || 0),
+          upcoming_appointments: Number(metricsRow.upcoming_appointments || 0),
         },
         recentOrders: resultRows(recentResult).map((row) => serializeOrder(row, [])),
         bestSellers: resultRows(bestResult).map((row) => ({
@@ -472,6 +603,8 @@ export function createDatabaseRepository(db) {
         (SELECT COUNT(*)::int FROM promotions) AS promotions,
         (SELECT COUNT(*)::int FROM orders) AS orders,
         (SELECT COUNT(*)::int FROM order_items) AS order_items,
+        (SELECT COUNT(*)::int FROM appointments) AS appointments,
+        (SELECT COUNT(*)::int FROM payment_intents) AS payment_intents,
         (SELECT COUNT(*)::int FROM audit_logs) AS audit_logs`);
       const counts = resultRows(result)[0] || {};
       return {

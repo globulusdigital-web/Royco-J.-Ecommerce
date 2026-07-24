@@ -5,7 +5,7 @@ import { Pool } from "pg";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(moduleDirectory, "..");
-const migrationsDirectory = path.join(projectRoot, "netlify", "database", "migrations");
+const migrationsDirectory = path.join(projectRoot, "backend", "database", "migrations");
 
 async function main() {
   const connectionString = process.env.DATABASE_URL;

@@ -2,4 +2,9 @@ node_modules
 dist/
 local-server/data/
 local-server/uploads/
+.env
+.env.*
+!.env.example
+.pnpm-store/
+.royco-preview.*.log
 

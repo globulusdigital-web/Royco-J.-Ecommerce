@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createApiHandler } from "../netlify/lib/api-handler.mjs";
-import { serializeUser } from "../netlify/lib/serializers.mjs";
+import { createApiHandler } from "../backend/lib/api-handler.mjs";
+import { serializeUser } from "../backend/lib/serializers.mjs";
 
 const env = {
   SESSION_SECRET: "test-session-secret-that-is-at-least-32-characters-long",

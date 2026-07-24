@@ -13,6 +13,8 @@ import {
   verifySession,
 } from "./auth.mjs";
 import { ApiError, assertSameOrigin, clientIp, fail, ok, readJson } from "./http.mjs";
+import { checkOtp, maskPhone, normalizePhone, OTP_EXPIRES_IN_SECONDS, sendOtp } from "./otp.mjs";
+import { createRazorpayOrder, verifyRazorpaySignature } from "./payments.mjs";
 import { getProductionRepository } from "./repository.mjs";
 import { getProductionBlobStorage } from "./storage.mjs";
 import {
@@ -30,7 +32,18 @@ import {
 } from "./validation.mjs";
 
 const ORDER_STATUSES = Object.freeze(["pending", "confirmed", "processing", "shipped", "delivered", "cancelled"]);
-const PAYMENT_METHODS = Object.freeze({ pay_in_store: "store", store: "store", cod: "cod", upi_transfer: "bank_transfer", bank_transfer: "bank_transfer" });
+const PAYMENT_METHODS = Object.freeze({
+  pay_in_store: "store",
+  store: "store",
+  cod: "cod",
+  upi_transfer: "bank_transfer",
+  bank_transfer: "bank_transfer",
+  razorpay: "razorpay",
+});
+const APPOINTMENT_STATUSES = Object.freeze(["requested", "confirmed", "completed", "cancelled"]);
+const APPOINTMENT_SERVICES = Object.freeze(["birth_chart", "gemstone_guidance", "muhurat"]);
+const APPOINTMENT_LANGUAGES = Object.freeze(["Bengali", "English", "Hindi"]);
+const APPOINTMENT_TIMES = Object.freeze(["10:30", "11:30", "12:30", "15:30", "16:30", "17:30"]);
 const IMAGE_EXTENSIONS = Object.freeze({ "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" });
 const MAX_UPLOAD_BYTES = Math.floor(3.5 * 1024 * 1024);
 
@@ -218,6 +231,74 @@ function validateCheckout(body) {
   };
 }
 
+function appointmentDay(dateValue) {
+  const date = String(dateValue || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new ApiError(422, "validation_error", "Choose a valid appointment date");
+  }
+  const start = new Date(`${date}T00:00:00+05:30`);
+  const parts = new Intl.DateTimeFormat("en", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(start);
+  const value = (type) => parts.find((part) => part.type === type)?.value;
+  const normalized = `${value("year")}-${value("month")}-${value("day")}`;
+  if (Number.isNaN(start.valueOf()) || normalized !== date) {
+    throw new ApiError(422, "validation_error", "Choose a valid appointment date");
+  }
+  return {
+    date,
+    start,
+    end: new Date(start.valueOf() + 24 * 60 * 60 * 1000),
+  };
+}
+
+function validateAppointment(body) {
+  const day = appointmentDay(body.date);
+  const time = String(body.time || "").trim();
+  if (!APPOINTMENT_TIMES.includes(time)) {
+    throw new ApiError(422, "validation_error", "Choose an available appointment time");
+  }
+  const scheduledAt = new Date(`${day.date}T${time}:00+05:30`);
+  const earliest = Date.now() + 30 * 60 * 1000;
+  const latest = Date.now() + 90 * 24 * 60 * 60 * 1000;
+  if (scheduledAt.valueOf() < earliest || scheduledAt.valueOf() > latest) {
+    throw new ApiError(422, "validation_error", "Appointments can be booked from 30 minutes to 90 days ahead");
+  }
+  const service = enumValue(body.service, APPOINTMENT_SERVICES);
+  const language = enumValue(body.language || "Bengali", APPOINTMENT_LANGUAGES);
+  if (!service || !language) throw new ApiError(422, "validation_error", "Choose a valid consultation and language");
+  return {
+    service,
+    language,
+    scheduledAt: scheduledAt.toISOString(),
+    notes: body.notes ? requiredText(body.notes, "Notes", 0, 600) : "",
+  };
+}
+
+async function appointmentAvailability(repository, dateValue) {
+  const day = appointmentDay(dateValue);
+  const reserved = new Set(
+    (await repository.appointmentAvailability(day.start.toISOString(), day.end.toISOString()))
+      .map((value) => new Date(value).toISOString()),
+  );
+  return {
+    date: day.date,
+    timeZone: "Asia/Kolkata",
+    slots: APPOINTMENT_TIMES.map((time) => {
+      const scheduledAt = new Date(`${day.date}T${time}:00+05:30`).toISOString();
+      return {
+        time,
+        scheduledAt,
+        available: new Date(scheduledAt).valueOf() >= Date.now() + 30 * 60 * 1000
+          && !reserved.has(scheduledAt),
+      };
+    }),
+  };
+}
+
 async function authenticatedUser(request, repository, env, { admin = false } = {}) {
   const secret = requiredSessionSecret(env);
   const token = parseCookies(request.headers.get("cookie"))[SESSION_COOKIE];
@@ -276,6 +357,9 @@ function salesCsv(rows) {
 
 function translateDatabaseError(error) {
   if (error instanceof ApiError) return error;
+  if (error?.constraint === "appointments_active_slot_unique") {
+    return new ApiError(409, "appointment_unavailable", "That appointment time was just booked. Please choose another.");
+  }
   if (error?.code === "23505") return new ApiError(409, "already_exists", "A record with that email, SKU, slug or offer code already exists");
   if (["23503", "23514", "22P02"].includes(error?.code)) return new ApiError(422, "validation_error", "The submitted data could not be saved");
   return error;
@@ -319,6 +403,50 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         return ok({ promotions: await repository.listPromotions(false) });
       }
 
+      if (path === "/appointments/availability" && method === "GET") {
+        return ok(await appointmentAvailability(repository, url.searchParams.get("date")));
+      }
+
+      if (path === "/auth/otp/request" && method === "POST") {
+        const body = await readJson(request);
+        const result = await sendOtp(body.phone, env);
+        return ok({
+          sent: true,
+          phone: result.phone,
+          maskedPhone: maskPhone(result.phone),
+          expiresIn: OTP_EXPIRES_IN_SECONDS,
+          ...(result.devOtp ? { devOtp: result.devOtp } : {}),
+        });
+      }
+
+      if (path === "/auth/otp/verify" && method === "POST") {
+        const body = await readJson(request);
+        const phone = normalizePhone(body.phone);
+        if (!(await checkOtp(phone, body.code, env))) {
+          throw new ApiError(401, "invalid_otp", "That verification code is invalid or has expired");
+        }
+        let user = await repository.getUserByPhone(phone);
+        if (!user) {
+          const name = requiredText(body.name, "Full name", 2, 160);
+          try {
+            user = await repository.createOtpUser({
+              id: randomUUID(),
+              name,
+              phone,
+              phoneNormalized: phone,
+            });
+          } catch (error) {
+            if (error?.code !== "23505") throw error;
+            user = await repository.getUserByPhone(phone);
+            if (!user) throw error;
+          }
+        }
+        const token = await issueSession(repository, user, request, env);
+        return ok({ user: repository.serializeUser(user), isNewUser: !user.email }, 200, {
+          "Set-Cookie": sessionCookie(token, SESSION_TTL_SECONDS, { secure: isSecureRequest(request) }),
+        });
+      }
+
       if (path === "/auth/signup" && method === "POST") {
         const body = await readJson(request);
         const email = cleanEmail(body.email);
@@ -343,7 +471,10 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         let user;
         if (body.admin === true) {
           const adminEmail = env.ADMIN_USER || "Admin@Royco";
-          const adminPassword = env.ADMIN_PASSWORD || "Admin@123";
+          const adminPassword = env.ADMIN_PASSWORD || (env.NODE_ENV === "production" ? "" : "Admin@123");
+          if (!adminPassword) {
+            throw new ApiError(503, "admin_not_configured", "Administrator access must be configured in Render.");
+          }
           if (!constantTimeText(normalized, normalizeEmail(adminEmail)) || !constantTimeText(body.password, adminPassword)) {
             throw new ApiError(401, "invalid_credentials", "Administrator ID or password is incorrect");
           }
@@ -380,8 +511,98 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         const { user } = await authenticatedUser(request, repository, env);
         if (user.role !== "customer") throw new ApiError(403, "customer_required", "Use a customer account to place an order");
         const checkout = validateCheckout(await readJson(request));
+        if (checkout.paymentMethod === "razorpay") {
+          throw new ApiError(422, "payment_verification_required", "Complete Razorpay verification before placing this order");
+        }
         const order = await repository.checkout({ user, ...checkout });
         return ok({ order }, 201);
+      }
+
+      if (path === "/payments/razorpay/order" && method === "POST") {
+        const { user } = await authenticatedUser(request, repository, env);
+        if (user.role !== "customer") throw new ApiError(403, "customer_required", "Use a customer account to place an order");
+        const checkout = validateCheckout({ ...(await readJson(request)), paymentMethod: "razorpay" });
+        const quote = await repository.quoteCheckout(checkout);
+        const intentId = randomUUID();
+        const provider = await createRazorpayOrder({
+          amountPaise: quote.totalPaise,
+          receipt: `royco_${intentId.replaceAll("-", "").slice(0, 24)}`,
+          notes: { customer_id: String(user.id), purpose: "Royco jewellery order" },
+          env,
+        });
+        if (provider.amountPaise !== quote.totalPaise || provider.currency !== "INR") {
+          throw new ApiError(502, "payment_amount_mismatch", "Razorpay returned an unexpected payment amount");
+        }
+        await repository.createPaymentIntent({
+          id: intentId,
+          userId: user.id,
+          providerOrderId: provider.providerOrderId,
+          amountPaise: quote.totalPaise,
+          checkoutPayload: checkout,
+        });
+        return ok({
+          keyId: provider.keyId,
+          orderId: provider.providerOrderId,
+          amount: quote.totalPaise,
+          currency: "INR",
+          name: "Royco Jewellers",
+          description: "Jewellery order",
+          prefill: { name: user.name, contact: user.phone, email: user.email || "" },
+        }, 201);
+      }
+
+      if (path === "/payments/razorpay/verify" && method === "POST") {
+        const { user } = await authenticatedUser(request, repository, env);
+        if (user.role !== "customer") throw new ApiError(403, "customer_required", "Use a customer account to place an order");
+        const body = await readJson(request);
+        const providerOrderId = requiredText(body.razorpay_order_id, "Razorpay order", 5, 100);
+        const paymentId = requiredText(body.razorpay_payment_id, "Razorpay payment", 5, 100);
+        const signature = requiredText(body.razorpay_signature, "Razorpay signature", 10, 256);
+        const intent = await repository.getPaymentIntent(providerOrderId, user.id);
+        if (!intent) throw new ApiError(404, "payment_not_found", "This payment session was not found");
+        if (intent.status === "paid" && intent.completed_order_id) {
+          const orders = await repository.listOrdersForUser(user.id);
+          const completed = orders.find((order) => String(order.id) === String(intent.completed_order_id));
+          if (completed) return ok({ order: completed });
+        }
+        if (!verifyRazorpaySignature({ providerOrderId, paymentId, signature, env })) {
+          throw new ApiError(400, "invalid_payment_signature", "Razorpay could not verify this payment");
+        }
+        const checkout = intent.checkoutPayload || intent.checkout_payload;
+        const order = await repository.checkout({
+          user,
+          ...checkout,
+          paymentMethod: "razorpay",
+          razorpayOrderId: providerOrderId,
+          razorpayPaymentId: paymentId,
+        });
+        await repository.completePaymentIntent(providerOrderId, paymentId, order.id);
+        return ok({ order }, 201);
+      }
+
+      if (path === "/appointments" && method === "GET") {
+        const { user } = await authenticatedUser(request, repository, env);
+        return ok({ appointments: await repository.listAppointmentsForUser(user.id) });
+      }
+
+      if (path === "/appointments" && method === "POST") {
+        const { user } = await authenticatedUser(request, repository, env);
+        if (user.role !== "customer") throw new ApiError(403, "customer_required", "Use a customer account to book an appointment");
+        const appointment = await repository.createAppointment({
+          id: randomUUID(),
+          user,
+          ...validateAppointment(await readJson(request)),
+        });
+        await repository.audit({
+          actorUserId: user.id,
+          actorRole: user.role,
+          action: "appointment.created",
+          entityType: "appointment",
+          entityId: appointment.id,
+          metadata: { scheduledAt: appointment.scheduledAt, service: appointment.service },
+          ipAddress: clientIp(request),
+        });
+        return ok({ appointment }, 201);
       }
 
       if (path === "/orders" && method === "GET") {
@@ -469,6 +690,23 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
           if (!order) throw new ApiError(404, "not_found", "Order not found");
           await audit("order.status_updated", "order", order.id, { status });
           return ok({ order });
+        }
+
+        if (path === "/admin/appointments" && method === "GET") {
+          return ok({ appointments: await repository.listAppointmentsAdmin() });
+        }
+        const appointmentStatus = path.match(/^\/admin\/appointments\/([^/]+)\/status$/);
+        if (appointmentStatus && method === "PUT") {
+          const body = await readJson(request);
+          const status = enumValue(body.status, APPOINTMENT_STATUSES);
+          if (!status) throw new ApiError(422, "validation_error", "Select a valid appointment status");
+          const appointment = await repository.updateAppointmentStatus(
+            decodeURIComponent(appointmentStatus[1]),
+            status,
+          );
+          if (!appointment) throw new ApiError(404, "not_found", "Appointment not found");
+          await audit("appointment.status_updated", "appointment", appointment.id, { status });
+          return ok({ appointment });
         }
 
         if (path === "/admin/database-summary" && method === "GET") return ok(await repository.databaseSummary());

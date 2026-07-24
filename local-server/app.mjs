@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApiHandler } from "../backend/lib/api-handler.mjs";
+import { getProductionRepository } from "../backend/lib/repository.mjs";
 import { getLocalRepository } from "./repository.mjs";
 import { getLocalFileStorage } from "./storage.mjs";
 import { HttpBridgeError, toWebRequest, writeWebResponse } from "./http-bridge.mjs";
@@ -37,12 +38,15 @@ const CONTENT_TYPES = Object.freeze({
 });
 
 export function developmentEnvironment(source = process.env) {
+  const production = source.NODE_ENV === "production";
   return {
     ...source,
     NODE_ENV: source.NODE_ENV || "development",
-    SESSION_SECRET: source.SESSION_SECRET?.length >= 32 ? source.SESSION_SECRET : LOCAL_SESSION_SECRET,
+    SESSION_SECRET: source.SESSION_SECRET?.length >= 32
+      ? source.SESSION_SECRET
+      : (production ? "" : LOCAL_SESSION_SECRET),
     ADMIN_USER: source.ADMIN_USER || "Admin@Royco",
-    ADMIN_PASSWORD: source.ADMIN_PASSWORD || "Admin@123",
+    ADMIN_PASSWORD: source.ADMIN_PASSWORD || (production ? "" : "Admin@123"),
     PUBLIC_SITE_URL: source.PUBLIC_SITE_URL || `http://${DEFAULT_HOST}:${DEFAULT_PORT}`,
   };
 }
@@ -142,7 +146,9 @@ export function createLocalApp({
   const getDependencies = async () => {
     if (dependencies) return typeof dependencies === "function" ? dependencies() : dependencies;
     dependencyPromise ??= Promise.all([
-      getLocalRepository({ storePath }),
+      env.DATABASE_URL || process.env.DATABASE_URL
+        ? getProductionRepository()
+        : getLocalRepository({ storePath }),
       getLocalFileStorage({ uploadsDir: uploadsDirectory }),
     ]).then(([repository, uploads]) => ({ repository, uploads }));
     return dependencyPromise;

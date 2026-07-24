@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ArrowRight, Camera as Instagram, ChevronRight, MapPin, Menu, Phone, Search, ShieldCheck, ShoppingBag as Bag, User, X } from "lucide-react";
+import { ArrowRight, Camera as Instagram, ChevronRight, Languages, MapPin, Menu, Phone, Search, ShieldCheck, ShoppingBag as Bag, User, X } from "lucide-react";
+import BackToTop from "./BackToTop";
+import SeasonalPetals from "./SeasonalPetals";
+import { useLanguage } from "../context/LanguageContext";
 import { useStore } from "../context/StoreContext";
 import { formatMoney } from "../lib/format";
 
 const navItems = [
-  ["New arrivals", "/shop?sort=newest"],
-  ["Gold", "/shop?metal=Gold"],
-  ["Diamond", "/shop?metal=Diamond"],
-  ["Silver", "/shop?metal=Silver"],
-  ["Platinum", "/shop?metal=Platinum"],
-  ["Visit us", "/visit"],
+  ["nav.new", "New arrivals", "/shop?sort=newest"],
+  ["nav.gold", "Gold", "/shop?metal=Gold"],
+  ["nav.diamond", "Diamond", "/shop?metal=Diamond"],
+  ["nav.silver", "Silver", "/shop?metal=Silver"],
+  ["nav.platinum", "Platinum", "/shop?metal=Platinum"],
+  ["nav.jyotishi", "Jyotishi", "/jyotishi"],
+  ["nav.visit", "Visit us", "/visit"],
 ];
 
 function Brand({ inverted = false }) {
@@ -86,6 +90,7 @@ export default function Layout({ children }) {
   const [search, setSearch] = useState("");
   const location = useLocation();
   const navigate = useNavigate();
+  const { language, toggleLanguage, t } = useLanguage();
   const isAdmin = location.pathname.startsWith("/admin");
 
   useEffect(() => {
@@ -103,18 +108,20 @@ export default function Layout({ children }) {
 
   return (
     <div className="site-shell">
+      <SeasonalPetals />
       <div className="announcement">
-        <span>Complimentary insured delivery on orders above ₹50,000</span>
-        <Link to="/visit">Visit Chandannagar <ChevronRight size={14} /></Link>
+        <span>{t("header.delivery", "Complimentary insured delivery on orders above ₹50,000")}</span>
+        <Link to="/visit">{t("header.visit", "Visit Chandannagar")} <ChevronRight size={14} /></Link>
       </div>
       <header className="site-header">
         <div className="header-primary container-wide">
           <button className="icon-button mobile-menu-button" type="button" aria-label="Open menu" onClick={() => setMenuOpen(true)}><Menu size={21} /></button>
           <Brand />
           <nav className="desktop-nav" aria-label="Primary navigation">
-            {navItems.map(([label, href]) => <NavLink key={label} to={href}>{label}</NavLink>)}
+            {navItems.map(([key, label, href]) => <NavLink key={key} to={href}>{t(key, label)}</NavLink>)}
           </nav>
           <div className="header-actions">
+            <button className="language-toggle" type="button" onClick={toggleLanguage} aria-label={language === "en" ? "বাংলায় দেখুন" : "View in English"}><Languages /><span>{language === "en" ? "বাংলা" : t("header.translate", "English")}</span></button>
             <button className="icon-button" type="button" aria-label="Search" onClick={() => setSearchOpen((value) => !value)}><Search size={20} /></button>
             <Link className="icon-button" aria-label={user ? "Your account" : "Sign in"} to={user ? (user.role === "admin" ? "/admin" : "/account") : "/login"}><User size={20} /></Link>
             <button className="icon-button bag-button" type="button" aria-label={`Shopping bag with ${cartCount} items`} onClick={() => setCartOpen(true)}><Bag size={20} /><span>{cartCount}</span></button>
@@ -133,9 +140,10 @@ export default function Layout({ children }) {
         <div className="mobile-menu-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setMenuOpen(false)}>
           <aside className="mobile-menu" aria-label="Mobile navigation">
             <div className="mobile-menu-header"><Brand /><button className="icon-button" type="button" aria-label="Close menu" onClick={() => setMenuOpen(false)}><X /></button></div>
+            <button className="mobile-language-toggle" type="button" onClick={toggleLanguage}><Languages /> {language === "en" ? "বাংলায় দেখুন" : "View in English"}</button>
             <nav>
-              {navItems.map(([label, href], index) => <Link key={label} to={href}><span>0{index + 1}</span>{label}<ArrowRight /></Link>)}
-              <Link to="/about"><span>07</span>Our story<ArrowRight /></Link>
+              {navItems.map(([key, label, href], index) => <Link key={key} to={href}><span>0{index + 1}</span>{t(key, label)}<ArrowRight /></Link>)}
+              <Link to="/about"><span>08</span>{t("nav.story", "Our story")}<ArrowRight /></Link>
             </nav>
             <div className="mobile-menu-contact"><a href="tel:+913326835943"><Phone size={17} /> 033 2683 5943</a><p>Open daily · 10:30 am – 9:00 pm</p></div>
           </aside>
@@ -148,12 +156,13 @@ export default function Layout({ children }) {
         <div className="footer-top container-wide">
           <div className="footer-brand"><Brand inverted /><p>Jewellery for the moments you keep, from the heart of Chandannagar.</p><div className="footer-rating"><strong>4.2</strong><span>★★★★★<small>89 Google reviews</small></span></div></div>
           <div className="footer-column"><h3>Collections</h3><Link to="/shop?metal=Gold">Gold</Link><Link to="/shop?metal=Diamond">Diamond</Link><Link to="/shop?metal=Silver">Silver</Link><Link to="/shop?metal=Platinum">Platinum</Link></div>
-          <div className="footer-column"><h3>Royco</h3><Link to="/about">Our story</Link><Link to="/visit">Visit the showroom</Link><Link to="/account">My orders</Link><Link to="/admin/login">Admin access</Link></div>
+          <div className="footer-column"><h3>Royco</h3><Link to="/about">Our story</Link><Link to="/visit">Visit the showroom</Link><Link to="/jyotishi">Jyotishi appointments</Link><Link to="/account">My orders</Link><Link to="/admin/login">Admin access</Link></div>
           <div className="footer-column footer-contact"><h3>Chandannagar</h3><a href="https://maps.google.com/?cid=12735356697874811323" target="_blank" rel="noreferrer"><MapPin size={16} /> Bagbazar Plaza, Rash Behari Ave, West Bengal 712136</a><a href="tel:+913326835943"><Phone size={16} /> 033 2683 5943</a><span><ShieldCheck size={16} /> Secure ordering & insured delivery</span></div>
         </div>
         <div className="footer-bottom container-wide"><span>© {new Date().getFullYear()} Royco Jewellers. All rights reserved.</span><span className="bengali">বিশ্বাসে, ঐতিহ্যে, আপনাদের সঙ্গে</span><a href="https://www.instagram.com/" target="_blank" rel="noreferrer" aria-label="Instagram"><Instagram size={18} /></a></div>
       </footer>
       <CartDrawer />
+      <BackToTop />
       {toast && <div className={`toast toast-${toast.tone}`} role="status" onClick={() => setToast(null)}>{toast.message}</div>}
     </div>
   );

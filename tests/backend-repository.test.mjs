@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDatabaseRepository } from "../netlify/lib/repository.mjs";
+import { createDatabaseRepository } from "../backend/lib/repository.mjs";
 
 function checkoutDatabase({ stock = 2 } = {}) {
   const statements = [];
