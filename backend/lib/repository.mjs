@@ -27,9 +27,50 @@ function makeOrderNumber(now = new Date()) {
   return `RJ${date}-${randomUUID().slice(0, 8).toUpperCase()}`;
 }
 
+const TRANSIENT_DATABASE_CODES = new Set([
+  "ECONNRESET", "ECONNREFUSED", "EPIPE", "ETIMEDOUT", "57P01", "57P02", "57P03",
+  "08000", "08001", "08003", "08004", "08006", "08007", "08P01",
+]);
+
+function transientDatabaseError(error) {
+  return TRANSIENT_DATABASE_CODES.has(error?.code)
+    || String(error?.code || "").startsWith("08")
+    || /connection (?:terminated|closed|refused)|timeout|socket hang up/i.test(String(error?.message || ""));
+}
+
+export async function withDatabaseRetry(operation, {
+  attempts = 5,
+  baseDelayMs = 120,
+  maxDelayMs = 2_500,
+  jitterMs = 80,
+  onRetry = () => {},
+} = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation(attempt);
+    } catch (error) {
+      lastError = error;
+      if (!transientDatabaseError(error) || attempt >= attempts) throw error;
+      const delayMs = Math.min(maxDelayMs, baseDelayMs * (2 ** (attempt - 1))) + Math.floor(Math.random() * Math.max(0, jitterMs));
+      onRetry({ attempt, delayMs, error });
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
+
 export function createDatabaseRepository(db) {
   const pool = db.pool;
-  const query = async (sql, values = []) => pool.query(sql, values);
+  const query = async (sql, values = []) => {
+    const readOnly = /^\s*(?:SELECT|SHOW)\b/i.test(sql);
+    return readOnly
+      ? withDatabaseRetry(() => pool.query(sql, values), {
+        onRetry: ({ attempt, delayMs, error }) =>
+          console.warn(`Postgres read retry ${attempt} in ${delayMs}ms (${error.code || error.message})`),
+      })
+      : pool.query(sql, values);
+  };
 
   async function loadOrderItems(orderIds) {
     if (!orderIds.length) return new Map();
@@ -125,7 +166,7 @@ export function createDatabaseRepository(db) {
 
     async getStoreSettings() {
       const result = await query("SELECT settings FROM store_settings WHERE id = 'primary' LIMIT 1");
-      return resultRows(result)[0]?.settings || DEFAULT_STORE_SETTINGS;
+      return mergeStoreSettings(DEFAULT_STORE_SETTINGS, resultRows(result)[0]?.settings || {}, { touch: false });
     },
 
     async updateStoreSettings(patch) {
@@ -468,7 +509,10 @@ export function createDatabaseRepository(db) {
       razorpayPaymentId = null,
       now = new Date(),
     }) {
-      const client = await pool.connect();
+      const client = await withDatabaseRetry(() => pool.connect(), {
+        onRetry: ({ attempt, delayMs, error }) =>
+          console.warn(`Postgres transaction connection retry ${attempt} in ${delayMs}ms (${error.code || error.message})`),
+      });
       try {
         await client.query("BEGIN");
         const quote = await calculateQuote(client, items, couponCode, { lock: true, gstRate });
@@ -712,9 +756,23 @@ export async function getProductionRepository() {
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+    max: Math.max(2, Number(process.env.DATABASE_POOL_MAX) || 12),
+    min: Math.max(0, Number(process.env.DATABASE_POOL_MIN) || 1),
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 8_000,
+    allowExitOnIdle: false,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 10_000,
   });
   pool.on("error", (error) => {
-    console.error("Render Postgres pool error", error);
+    console.error("Render Postgres pool error", error.stack || error);
+  });
+  await withDatabaseRetry(() => pool.query("SELECT 1 AS connected"), {
+    attempts: Math.max(3, Number(process.env.DATABASE_CONNECT_ATTEMPTS) || 6),
+    baseDelayMs: 250,
+    maxDelayMs: 5_000,
+    onRetry: ({ attempt, delayMs, error }) =>
+      console.warn(`Postgres startup connection retry ${attempt} in ${delayMs}ms (${error.code || error.message})`),
   });
   return createDatabaseRepository({ pool });
 }

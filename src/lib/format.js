@@ -1,12 +1,17 @@
+function activeLocale() {
+  if (typeof document === "undefined") return "en-IN";
+  return ({ bn: "bn-IN", hi: "hi-IN" })[document.documentElement.lang] || "en-IN";
+}
+
 export const formatMoney = (value) =>
-  new Intl.NumberFormat("en-IN", {
+  new Intl.NumberFormat(activeLocale(), {
     style: "currency",
     currency: "INR",
     maximumFractionDigits: 0,
   }).format(Number(value || 0));
 
 export const formatDate = (value) =>
-  new Intl.DateTimeFormat("en-IN", {
+  new Intl.DateTimeFormat(activeLocale(), {
     day: "2-digit",
     month: "short",
     year: "numeric",

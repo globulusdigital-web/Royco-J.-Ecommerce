@@ -15,7 +15,8 @@ import {
 import { ApiError, assertSameOrigin, clientIp, fail, ok, readJson } from "./http.mjs";
 import { checkOtp, maskPhone, normalizePhone, OTP_EXPIRES_IN_SECONDS, sendOtp } from "./otp.mjs";
 import { createRazorpayOrder, verifyRazorpaySignature } from "./payments.mjs";
-import { GST_RATE_PERCENT, HIGH_VALUE_THRESHOLD_PAISE, isHighValue, validPan } from "./commerce-rules.mjs";
+import { GST_RATE_PERCENT, HIGH_VALUE_THRESHOLD_PAISE, isHighValue, SEASONAL_THEME_OFFERS, validPan } from "./commerce-rules.mjs";
+import { createRateLimiter } from "./rate-limit.mjs";
 import { getProductionRepository } from "./repository.mjs";
 import { getProductionBlobStorage } from "./storage.mjs";
 import {
@@ -47,6 +48,7 @@ const APPOINTMENT_LANGUAGES = Object.freeze(["Bengali", "English", "Hindi"]);
 const APPOINTMENT_TIMES = Object.freeze(["10:30", "11:30", "12:30", "15:30", "16:30", "17:30"]);
 const IMAGE_EXTENSIONS = Object.freeze({ "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" });
 const MAX_UPLOAD_BYTES = Math.floor(3.5 * 1024 * 1024);
+const THEME_IDS = new Set(["default", ...SEASONAL_THEME_OFFERS.map((offer) => offer.id)]);
 
 let productionDependencies;
 
@@ -245,6 +247,83 @@ function validateCheckout(body) {
   };
 }
 
+function themeDate(value, field) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) throw new ApiError(422, "validation_error", `${field} is invalid`);
+  return date.toISOString();
+}
+
+function validateStoreSettingsPatch(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new ApiError(422, "validation_error", "Store settings must be an object");
+  }
+  const patch = {};
+  for (const key of ["rates", "makingCharges", "social", "published"]) {
+    if (body[key] !== undefined) patch[key] = body[key];
+  }
+  if (body.theme === undefined) return patch;
+  if (!body.theme || typeof body.theme !== "object" || Array.isArray(body.theme)) {
+    throw new ApiError(422, "validation_error", "Theme settings must be an object");
+  }
+  const density = integer(body.theme.density ?? 34, { field: "Particle density", min: 8, max: 90 });
+  if (density.error) throw new ApiError(422, "validation_error", density.error);
+  const speed = Number(body.theme.speed ?? 1);
+  if (!Number.isFinite(speed) || speed < 0.25 || speed > 2.5) {
+    throw new ApiError(422, "validation_error", "Animation speed must be between 0.25 and 2.5");
+  }
+  const activeTheme = String(body.theme.activeTheme || "default");
+  if (!THEME_IDS.has(activeTheme)) throw new ApiError(422, "validation_error", "Select a valid seasonal theme");
+  let offers;
+  if (body.theme.offers !== undefined) {
+    if (!Array.isArray(body.theme.offers) || body.theme.offers.length > SEASONAL_THEME_OFFERS.length) {
+      throw new ApiError(422, "validation_error", "Seasonal offers are invalid");
+    }
+    const seen = new Set();
+    offers = body.theme.offers.map((offer, index) => {
+      const id = String(offer?.id || "");
+      if (!THEME_IDS.has(id) || id === "default" || seen.has(id)) {
+        throw new ApiError(422, "validation_error", `Seasonal offer ${index + 1} is invalid`);
+      }
+      seen.add(id);
+      const title = {};
+      const promotionText = {};
+      for (const language of ["en", "bn", "hi"]) {
+        title[language] = optionalText(offer.title?.[language], `${language} offer title`, 160);
+        promotionText[language] = optionalText(offer.promotionText?.[language], `${language} promotion text`, 500);
+      }
+      const discountCode = optionalText(offer.discountCode, "Discount code", 32).toUpperCase();
+      if (discountCode && !/^[A-Z0-9_-]+$/.test(discountCode)) {
+        throw new ApiError(422, "validation_error", "Discount code contains unsupported characters");
+      }
+      const startAt = themeDate(offer.startAt, "Offer start date");
+      const endAt = themeDate(offer.endAt, "Offer end date");
+      if (startAt && endAt && new Date(endAt) <= new Date(startAt)) {
+        throw new ApiError(422, "validation_error", "Offer end date must be after its start date");
+      }
+      return {
+        id,
+        enabled: offer.enabled === true,
+        title,
+        promotionText,
+        discountCode,
+        bannerImageUrl: validUrl(offer.bannerImageUrl, { required: false }),
+        startAt,
+        endAt,
+      };
+    });
+  }
+  patch.theme = {
+    animationsEnabled: body.theme.animationsEnabled !== false,
+    activeTheme,
+    density: density.value,
+    speed: Math.round(speed * 100) / 100,
+    disableOnMobile: body.theme.disableOnMobile !== false,
+    ...(offers ? { offers } : {}),
+  };
+  return patch;
+}
+
 function appointmentDay(dateValue) {
   const date = String(dateValue || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -429,17 +508,38 @@ function translateDatabaseError(error) {
 }
 
 export function createApiHandler({ getDependencies = defaultDependencies, env = process.env } = {}) {
+  const generalLimiter = createRateLimiter({
+    windowMs: Number(env.API_RATE_LIMIT_WINDOW_MS) || 60_000,
+    max: Number(env.API_RATE_LIMIT_MAX) || 240,
+  });
+  const sensitiveLimiter = createRateLimiter({
+    windowMs: Number(env.SENSITIVE_RATE_LIMIT_WINDOW_MS) || 10 * 60_000,
+    max: Number(env.SENSITIVE_RATE_LIMIT_MAX) || 12,
+    code: "sensitive_rate_limited",
+    message: "Too many verification or sign-in attempts. Please wait before trying again.",
+  });
+
   return async function handler(request) {
     try {
       const method = request.method.toUpperCase();
       const path = apiPath(request.url);
       const url = new URL(request.url);
       if (method === "OPTIONS") return new Response(null, { status: 204, headers: { Allow: "GET, HEAD, POST, PUT, DELETE, OPTIONS" } });
+      if (path !== "/health") {
+        const ip = clientIp(request);
+        generalLimiter.check(ip);
+        if (/^\/(?:auth\/(?:login|signup|otp)|compliance\/otp)/.test(path)) sensitiveLimiter.check(ip);
+      }
       if (!["GET", "HEAD"].includes(method)) assertSameOrigin(request);
       const { repository, uploads } = await getDependencies();
 
       if (path === "/health" && method === "GET") {
-        const connected = await repository.ping();
+        let connected = false;
+        try {
+          connected = await repository.ping();
+        } catch (error) {
+          console.error("Health check database error", error?.stack || error);
+        }
         return ok({ status: connected ? "ok" : "degraded", database: connected ? "connected" : "unavailable", time: new Date().toISOString() }, connected ? 200 : 503);
       }
 
@@ -811,7 +911,7 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         }
         if (path === "/admin/store-settings" && method === "PUT") {
           const body = await readJson(request);
-          const settings = await repository.updateStoreSettings(body);
+          const settings = await repository.updateStoreSettings(validateStoreSettingsPatch(body));
           await audit("store_settings.published", "store_settings", "primary", { updatedAt: settings.updatedAt });
           return ok({ settings });
         }

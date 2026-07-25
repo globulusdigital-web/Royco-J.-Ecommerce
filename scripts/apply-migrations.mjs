@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
+import { withDatabaseRetry } from "../backend/lib/repository.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(moduleDirectory, "..");
@@ -24,7 +25,13 @@ async function main() {
     for (const file of files) {
       const source = await readFile(path.join(migrationsDirectory, file), "utf8");
       console.log(`Applying migration ${file}`);
-      await pool.query(source);
+      await withDatabaseRetry(() => pool.query(source), {
+        attempts: 6,
+        baseDelayMs: 300,
+        maxDelayMs: 5_000,
+        onRetry: ({ attempt, delayMs, error }) =>
+          console.warn(`Migration connection retry ${attempt} in ${delayMs}ms (${error.code || error.message})`),
+      });
     }
     console.log(`Applied ${files.length} Postgres migration(s)`);
   } finally {

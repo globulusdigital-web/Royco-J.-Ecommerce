@@ -8,6 +8,7 @@ import { getProductionRepository } from "../backend/lib/repository.mjs";
 import { getLocalRepository } from "./repository.mjs";
 import { getLocalFileStorage } from "./storage.mjs";
 import { HttpBridgeError, toWebRequest, writeWebResponse } from "./http-bridge.mjs";
+import { installProcessSafety, runtimeSafetyState } from "../backend/lib/runtime-safety.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultProjectRoot = path.resolve(moduleDirectory, "..");
@@ -15,6 +16,7 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PRODUCTION_HOST = "0.0.0.0";
 const DEFAULT_PORT = 4173;
 const LOCAL_SESSION_SECRET = "royco-local-session-secret-2026-change-for-production";
+installProcessSafety();
 
 const CONTENT_TYPES = Object.freeze({
   ".avif": "image/avif",
@@ -231,6 +233,10 @@ export async function start(options = {}) {
   const configuredPort = Number(options.port ?? process.env.PORT ?? DEFAULT_PORT);
   const port = Number.isInteger(configuredPort) && configuredPort >= 0 && configuredPort <= 65535 ? configuredPort : DEFAULT_PORT;
   const server = createLocalApp({ ...options, hostname, port });
+  server.requestTimeout = 30_000;
+  server.headersTimeout = 15_000;
+  server.keepAliveTimeout = 5_000;
+  server.maxRequestsPerSocket = 1_000;
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, hostname, resolve);
@@ -238,7 +244,7 @@ export async function start(options = {}) {
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
   const url = `http://${hostname}:${actualPort}`;
-  console.log(`Royco Jewellers is running at ${url}`);
+  console.log(`Royco Jewellers is running at ${url}`, runtimeSafetyState());
   return { server, url };
 }
 

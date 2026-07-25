@@ -48,6 +48,14 @@ services:
         sync: false
       - key: PUBLIC_SITE_URL
         value: https://your-render-app.onrender.com
+      - key: DATABASE_POOL_MAX
+        value: 12
+      - key: DATABASE_CONNECT_ATTEMPTS
+        value: 6
+      - key: API_RATE_LIMIT_MAX
+        value: 240
+      - key: SENSITIVE_RATE_LIMIT_MAX
+        value: 12
 
 databases:
   - name: royco-postgres

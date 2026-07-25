@@ -131,7 +131,7 @@ function normalizeLoadedStore(value) {
     if (!Array.isArray(value[key])) value[key] = [];
   }
   value.schema_version ||= 1;
-  value.store_settings ||= cloneStoreSettings(DEFAULT_STORE_SETTINGS);
+  value.store_settings = mergeStoreSettings(DEFAULT_STORE_SETTINGS, value.store_settings || {}, { touch: false });
   value.next_product_id ||= Math.max(0, ...value.products.map((row) => Number(row.id) || 0)) + 1;
   value.next_order_item_id ||= Math.max(0, ...value.order_items.map((row) => Number(row.id) || 0)) + 1;
   value.next_audit_id ||= Math.max(0, ...value.audit_logs.map((row) => Number(row.id) || 0)) + 1;
@@ -143,7 +143,20 @@ async function atomicWriteJson(path, value) {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
-    await rename(temporary, path);
+    let lastError;
+    for (let attempt = 1; attempt <= 7; attempt += 1) {
+      try {
+        await rename(temporary, path);
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        const transientWindowsLock = ["EPERM", "EACCES", "EBUSY"].includes(error?.code);
+        if (!transientWindowsLock || attempt === 7) throw error;
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, attempt * 25));
+      }
+    }
+    if (lastError) throw lastError;
   } finally {
     await rm(temporary, { force: true }).catch(() => {});
   }

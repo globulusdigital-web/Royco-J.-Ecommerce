@@ -3,7 +3,7 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ArrowRight, Camera as Instagram, ChevronRight, Languages, MapPin, Menu, MessageCircle, Phone, Search, ShieldCheck, ShoppingBag as Bag, User, X } from "lucide-react";
 import BackToTop from "./BackToTop";
 import SeasonalPetals from "./SeasonalPetals";
-import { useLanguage } from "../context/LanguageContext";
+import { supportedLanguages, useLanguage } from "../context/LanguageContext";
 import { useStore } from "../context/StoreContext";
 import { formatMoney } from "../lib/format";
 
@@ -33,6 +33,7 @@ function Brand({ inverted = false }) {
 
 function CartDrawer() {
   const { cart, cartCount, cartSubtotal, cartOpen, setCartOpen, updateCart, removeFromCart } = useStore();
+  const { t } = useLanguage();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -45,16 +46,16 @@ function CartDrawer() {
     <div className="drawer-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setCartOpen(false)}>
       <aside className="cart-drawer" role="dialog" aria-modal="true" aria-labelledby="bag-title">
         <header className="drawer-header">
-          <div><span className="eyebrow">Your selection</span><h2 id="bag-title">Shopping bag <em>{cartCount}</em></h2></div>
+          <div><span className="eyebrow">{t("cart.selection", "Your selection")}</span><h2 id="bag-title">{t("cart.title", "Shopping bag")} <em>{cartCount}</em></h2></div>
           <button className="icon-button" onClick={() => setCartOpen(false)} type="button" aria-label="Close bag"><X size={20} /></button>
         </header>
         <div className="drawer-content">
           {cart.length === 0 ? (
             <div className="empty-state">
               <span className="empty-gem"><Bag size={30} /></span>
-              <h3>Your bag is waiting</h3>
-              <p>Discover pieces made for celebrations, milestones and beautiful ordinary days.</p>
-              <button className="button button-dark" type="button" onClick={() => { setCartOpen(false); navigate("/shop"); }}>Explore the collection</button>
+              <h3>{t("cart.emptyTitle", "Your bag is waiting")}</h3>
+              <p>{t("cart.emptyText", "Discover pieces made for celebrations, milestones and beautiful ordinary days.")}</p>
+              <button className="button button-dark" type="button" onClick={() => { setCartOpen(false); navigate("/shop"); }}>{t("cart.explore", "Explore the collection")}</button>
             </div>
           ) : cart.map(({ product, quantity }) => (
             <div className="cart-item" key={product.id}>
@@ -68,16 +69,16 @@ function CartDrawer() {
                   <button type="button" onClick={() => updateCart(product.id, quantity + 1)} aria-label="Increase quantity">+</button>
                 </div>
               </div>
-              <button className="cart-remove" type="button" onClick={() => removeFromCart(product.id)}>Remove</button>
+              <button className="cart-remove" type="button" onClick={() => removeFromCart(product.id)}>{t("common.remove", "Remove")}</button>
             </div>
           ))}
         </div>
         {cart.length > 0 && (
           <footer className="drawer-footer">
-            <div className="drawer-total"><span>Subtotal</span><strong>{formatMoney(cartSubtotal)}</strong></div>
-            <p>Taxes and delivery are calculated at checkout.</p>
-            <button className="button button-gold button-full" type="button" onClick={() => { setCartOpen(false); navigate("/checkout"); }}>Continue to checkout <ArrowRight size={17} /></button>
-            <button className="text-button" type="button" onClick={() => { setCartOpen(false); navigate("/shop"); }}>Continue shopping</button>
+            <div className="drawer-total"><span>{t("cart.subtotal", "Subtotal")}</span><strong>{formatMoney(cartSubtotal)}</strong></div>
+            <p>{t("cart.taxNote", "Taxes and delivery are calculated at checkout.")}</p>
+            <button className="button button-gold button-full" type="button" onClick={() => { setCartOpen(false); navigate("/checkout"); }}>{t("cart.checkout", "Continue to checkout")} <ArrowRight size={17} /></button>
+            <button className="text-button" type="button" onClick={() => { setCartOpen(false); navigate("/shop"); }}>{t("cart.continue", "Continue shopping")}</button>
           </footer>
         )}
       </aside>
@@ -92,7 +93,7 @@ export default function Layout({ children }) {
   const [search, setSearch] = useState("");
   const location = useLocation();
   const navigate = useNavigate();
-  const { language, toggleLanguage, t } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
   const isAdmin = location.pathname.startsWith("/admin");
 
   useEffect(() => {
@@ -124,7 +125,12 @@ export default function Layout({ children }) {
           </nav>
           <div className="header-actions">
             <div className="header-socials"><a href={storeSettings.social.facebook} target="_blank" rel="noreferrer" aria-label="Facebook"><b>f</b></a><a href={storeSettings.social.whatsapp} target="_blank" rel="noreferrer" aria-label="WhatsApp Business"><MessageCircle /></a><a href={storeSettings.social.instagram} target="_blank" rel="noreferrer" aria-label="Instagram"><Instagram /></a><a href={storeSettings.social.x} target="_blank" rel="noreferrer" aria-label="X">𝕏</a></div>
-            <button className="language-toggle" type="button" onClick={toggleLanguage} aria-label={language === "en" ? "বাংলায় দেখুন" : "View in English"}><Languages /><span>{language === "en" ? "বাংলা" : t("header.translate", "English")}</span></button>
+            <label className="language-selector" aria-label="Select language">
+              <Languages />
+              <select value={language} onChange={(event) => setLanguage(event.target.value)}>
+                {supportedLanguages.map((option) => <option value={option.code} key={option.code}>{option.label}</option>)}
+              </select>
+            </label>
             <button className="icon-button" type="button" aria-label="Search" onClick={() => setSearchOpen((value) => !value)}><Search size={20} /></button>
             <Link className="icon-button" aria-label={user ? "Your account" : "Sign in"} to={user ? (user.role === "admin" ? "/admin" : "/account") : "/login"}><User size={20} /></Link>
             <button className="icon-button bag-button" type="button" aria-label={`Shopping bag with ${cartCount} items`} onClick={() => setCartOpen(true)}><Bag size={20} /><span>{cartCount}</span></button>
@@ -133,8 +139,8 @@ export default function Layout({ children }) {
         {searchOpen && (
           <form className="header-search" onSubmit={submitSearch}>
             <Search size={20} />
-            <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search rings, necklaces, gold…" aria-label="Search products" />
-            <button className="text-button" type="submit">Search</button>
+            <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("header.searchPlaceholder", "Search rings, necklaces, gold…")} aria-label={t("common.search", "Search products")} />
+            <button className="text-button" type="submit">{t("common.search", "Search")}</button>
           </form>
         )}
       </header>
@@ -143,7 +149,12 @@ export default function Layout({ children }) {
         <div className="mobile-menu-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setMenuOpen(false)}>
           <aside className="mobile-menu" aria-label="Mobile navigation">
             <div className="mobile-menu-header"><Brand /><button className="icon-button" type="button" aria-label="Close menu" onClick={() => setMenuOpen(false)}><X /></button></div>
-            <button className="mobile-language-toggle" type="button" onClick={toggleLanguage}><Languages /> {language === "en" ? "বাংলায় দেখুন" : "View in English"}</button>
+            <label className="mobile-language-selector">
+              <Languages />
+              <select value={language} onChange={(event) => setLanguage(event.target.value)} aria-label="Select language">
+                {supportedLanguages.map((option) => <option value={option.code} key={option.code}>{option.label}</option>)}
+              </select>
+            </label>
             <nav>
               {navItems.map(([key, label, href], index) => <Link key={key} to={href}><span>0{index + 1}</span>{t(key, label)}<ArrowRight /></Link>)}
               <Link to="/about"><span>10</span>{t("nav.story", "Our story")}<ArrowRight /></Link>

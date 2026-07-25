@@ -19,7 +19,8 @@ A production-structured, JavaScript-only jewellery storefront for Royco Jeweller
 - Persistent shopping bag
 - Customer sign-up, sign-in and sign-out
 - Password-free customer sign-in with mobile number and SMS OTP through Twilio Verify
-- Bilingual English/Bengali controls for the new account and Jyotishi booking flows
+- Dynamic English, Bengali and Hindi storefront controls with native fonts and locale-aware prices/dates
+- Lightweight seasonal canvas themes that pause in background tabs and respect reduced-motion/mobile power preferences
 - Jyotishi appointment scheduling with live slot availability and an administrator diary
 - Jyotishi Jewels catalogue with gemstone, Rashi, planet and metal-setting filters
 - Astrologer and Royco specialist booking with in-person or virtual consultation modes
@@ -40,6 +41,7 @@ A production-structured, JavaScript-only jewellery storefront for Royco Jeweller
 - Revenue, order, customer, stock and best-seller dashboard
 - Upcoming Jyotishi count plus appointment confirmation, completion and cancellation controls
 - Daily market rates, global/product making charges and social account management
+- Seasonal theme control with pause/resume, festival selection, multilingual offer copy, artwork, schedules, density and speed
 - High-value compliance review with approve/reject order gating
 - Database record summary and administrator audit trail
 - Downloadable sales CSV
@@ -59,6 +61,18 @@ pnpm dev
 
 Open `http://127.0.0.1:4173`.
 
+For a self-hosted production process, PM2 cluster management is included:
+
+```bash
+pnpm start:pm2
+```
+
+The PM2 configuration restarts failed workers with exponential backoff, applies
+a memory ceiling and performs graceful shutdown. It uses cluster mode when
+`DATABASE_URL` is configured; the local JSON development store remains
+single-process to avoid cross-process write races. Render continues to use its
+own managed process supervisor.
+
 The local server is full-stack: accounts, signed sessions, checkout, inventory,
 orders, Admin CRUD, image uploads, dashboard data and sales CSV all work and
 persist between restarts. Runtime data is stored in `local-server/data/` and
@@ -74,6 +88,11 @@ Database migrations are applied automatically by the Render startup path:
 ```bash
 node scripts/apply-migrations.mjs
 ```
+
+The API also applies bounded request payloads, general and sensitive-route rate
+limits, standardized error responses and retry/backoff for transient Postgres
+connections. Tune the documented `API_RATE_LIMIT_*`, `SENSITIVE_RATE_LIMIT_*`
+and `DATABASE_*` environment variables when production traffic is known.
 
 ## Deploy to Render
 

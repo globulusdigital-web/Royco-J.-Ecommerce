@@ -6,6 +6,7 @@ import { useStore } from "../context/StoreContext";
 import { categories, metals } from "../data/fallbackProducts";
 import { api } from "../lib/api";
 import { formatDate, formatMoney, normalizeProduct, orderStatusLabel } from "../lib/format";
+import { defaultSeasonalOffers, defaultThemeSettings, seasonalThemeCatalog } from "../lib/seasonal-themes";
 
 const adminNav = [
   ["Overview", "/admin", LayoutDashboard],
@@ -14,6 +15,7 @@ const adminNav = [
   ["Orders", "/admin/orders", ShoppingBag],
   ["Appointments", "/admin/appointments", CalendarDays],
   ["Rates & settings", "/admin/settings", Settings2],
+  ["Seasonal themes", "/admin/themes", Sparkles],
   ["Compliance", "/admin/compliance", ShieldCheck],
   ["Database", "/admin/database", Database],
 ];
@@ -164,6 +166,104 @@ function SettingsPanel() {
   return <form className="admin-panel settings-panel" onSubmit={save}><PanelHeader eyebrow="Daily publishing" title="Rates & store settings" action={<button className="button button-dark" type="submit"><Save /> Publish changes</button>} />{error && <AdminError message={error} />}<section className="admin-card"><div className="card-heading"><div><span className="eyebrow">Market reference</span><h3>Daily rates</h3></div><CircleDollarSign /></div><div className="settings-grid">{[["gold24k", "Gold 24K / gram"], ["gold22k", "Gold 22K / gram"], ["gold18k", "Gold 18K / gram"], ["silverGram", "Silver / gram"], ["silverKg", "Silver / kg"], ["platinumGram", "Platinum / gram"]].map(([key, label]) => <label key={key}><span>{label}</span><input type="number" min="0" value={form.rates[key]} onChange={(e) => rate(key, e.target.value)} /></label>)}{Object.entries(form.rates.diamond).map(([key, value]) => <label key={key}><span>Diamond {key} / carat</span><input type="number" min="0" value={value} onChange={(e) => diamond(key, e.target.value)} /></label>)}</div></section><section className="admin-card"><div className="card-heading"><div><span className="eyebrow">Pricing engine</span><h3>Default making charges</h3></div><Settings2 /></div><div className="settings-grid">{Object.entries(form.makingCharges).map(([metal, config]) => <div className="making-setting" key={metal}><strong>{metal}</strong><select value={config.type} onChange={(e) => making(metal, "type", e.target.value)}><option value="percent">Percentage</option><option value="flat">Flat amount</option></select><input type="number" min="0" value={config.value} onChange={(e) => making(metal, "value", e.target.value)} /></div>)}</div></section><section className="admin-card"><div className="card-heading"><div><span className="eyebrow">Brand profiles</span><h3>Social media accounts</h3></div><Sparkles /></div><div className="settings-grid">{Object.entries(form.social).map(([key, value]) => <label key={key}><span>{key === "x" ? "X (Twitter)" : key}</span><input type="url" value={value} onChange={(e) => social(key, e.target.value)} /></label>)}</div></section></form>;
 }
 
+function dateTimeInput(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.valueOf())) return "";
+  const local = new Date(date.valueOf() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function normalizedTheme(theme = {}) {
+  const storedOffers = Array.isArray(theme.offers) ? theme.offers : [];
+  return {
+    ...defaultThemeSettings,
+    ...theme,
+    offers: defaultSeasonalOffers.map((offer) => ({
+      ...offer,
+      ...storedOffers.find((entry) => entry.id === offer.id),
+      title: { ...offer.title, ...storedOffers.find((entry) => entry.id === offer.id)?.title },
+      promotionText: { ...offer.promotionText, ...storedOffers.find((entry) => entry.id === offer.id)?.promotionText },
+    })),
+  };
+}
+
+function ThemesPanel() {
+  const { notify, reloadCatalog } = useStore();
+  const [theme, setTheme] = useState(null);
+  const [selectedId, setSelectedId] = useState("durga-puja");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    api("/api/admin/store-settings")
+      .then((payload) => setTheme(normalizedTheme(payload.settings?.theme)))
+      .catch((requestError) => setError(requestError.message));
+  }, []);
+  if (!theme && !error) return <AdminLoading label="Loading seasonal themes" />;
+  if (!theme) return <AdminError message={error} />;
+  const selected = theme.offers.find((offer) => offer.id === selectedId) || theme.offers[0];
+  const setting = (key, value) => setTheme((current) => ({ ...current, [key]: value }));
+  const offer = (key, value) => setTheme((current) => ({
+    ...current,
+    offers: current.offers.map((entry) => entry.id === selected.id ? { ...entry, [key]: value } : entry),
+  }));
+  const translated = (field, language, value) => setTheme((current) => ({
+    ...current,
+    offers: current.offers.map((entry) => entry.id === selected.id
+      ? { ...entry, [field]: { ...entry[field], [language]: value } }
+      : entry),
+  }));
+  const save = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      const payload = await api("/api/admin/store-settings", { method: "PUT", body: { theme } });
+      setTheme(normalizedTheme(payload.settings?.theme));
+      await reloadCatalog();
+      notify("Seasonal theme settings published.");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <form className="admin-panel themes-panel" onSubmit={save}>
+    <PanelHeader eyebrow="Visual experience" title="Occasional offers & seasonal themes" action={<button className="button button-dark" type="submit" disabled={saving}><Save /> {saving ? "Publishing…" : "Publish theme"}</button>} />
+    {error && <AdminError message={error} />}
+    <section className="admin-card theme-master-card">
+      <div className="card-heading"><div><span className="eyebrow">Global controls</span><h3>Animation & active theme</h3></div><Sparkles /></div>
+      <div className="theme-control-grid">
+        <label className="theme-switch"><input type="checkbox" checked={theme.animationsEnabled !== false} onChange={(event) => setting("animationsEnabled", event.target.checked)} /><span><strong>{theme.animationsEnabled !== false ? "Animations running" : "Animations paused"}</strong><small>Pause or resume every storefront particle effect.</small></span></label>
+        <label><span>Active theme</span><select value={theme.activeTheme} onChange={(event) => setting("activeTheme", event.target.value)}>{seasonalThemeCatalog.map((entry) => <option value={entry.id} key={entry.id}>{entry.label} · {entry.native}</option>)}</select></label>
+        <label><span>Particle density · {theme.density}</span><input type="range" min="8" max="90" value={theme.density} onChange={(event) => setting("density", Number(event.target.value))} /></label>
+        <label><span>Animation speed · {Number(theme.speed).toFixed(2)}×</span><input type="range" min=".25" max="2.5" step=".05" value={theme.speed} onChange={(event) => setting("speed", Number(event.target.value))} /></label>
+        <label className="theme-switch"><input type="checkbox" checked={theme.disableOnMobile !== false} onChange={(event) => setting("disableOnMobile", event.target.checked)} /><span><strong>Low-power mobile protection</strong><small>Disable particles below 720px while keeping the seasonal artwork.</small></span></label>
+      </div>
+    </section>
+    <section className="admin-card">
+      <div className="card-heading"><div><span className="eyebrow">Offer editor</span><h3>Message, artwork & schedule</h3></div><CalendarDays /></div>
+      <div className="theme-offer-layout">
+        <nav className="theme-offer-list" aria-label="Festival offers">{theme.offers.map((entry) => {
+          const definition = seasonalThemeCatalog.find((item) => item.id === entry.id);
+          return <button className={selected.id === entry.id ? "active" : ""} type="button" key={entry.id} onClick={() => setSelectedId(entry.id)}><span>{definition?.motif}</span><span><strong>{definition?.label || entry.id}</strong><small>{entry.enabled ? "Scheduled / enabled" : "Disabled"}</small></span></button>;
+        })}</nav>
+        <div className="theme-offer-editor">
+          <label className="theme-switch"><input type="checkbox" checked={Boolean(selected.enabled)} onChange={(event) => offer("enabled", event.target.checked)} /><span><strong>Enable automatic schedule</strong><small>The most recently started valid offer becomes active automatically.</small></span></label>
+          <div className="theme-language-grid">{[["en", "English"], ["bn", "বাংলা"], ["hi", "हिंदी"]].map(([code, label]) => <fieldset key={code}><legend>{label}</legend><label><span>Offer title</span><input value={selected.title?.[code] || ""} maxLength="160" onChange={(event) => translated("title", code, event.target.value)} /></label><label><span>Promotion text</span><textarea rows="3" value={selected.promotionText?.[code] || ""} maxLength="500" onChange={(event) => translated("promotionText", code, event.target.value)} /></label></fieldset>)}</div>
+          <div className="form-grid">
+            <label><span>Discount code</span><input value={selected.discountCode || ""} maxLength="32" onChange={(event) => offer("discountCode", event.target.value.toUpperCase())} /></label>
+            <label><span>Banner / background image URL</span><input type="url" value={selected.bannerImageUrl || ""} onChange={(event) => offer("bannerImageUrl", event.target.value)} placeholder="https://…" /></label>
+            <label><span>Start date & time</span><input type="datetime-local" value={dateTimeInput(selected.startAt)} onChange={(event) => offer("startAt", event.target.value ? new Date(event.target.value).toISOString() : "")} /></label>
+            <label><span>End date & time</span><input type="datetime-local" value={dateTimeInput(selected.endAt)} onChange={(event) => offer("endAt", event.target.value ? new Date(event.target.value).toISOString() : "")} /></label>
+          </div>
+        </div>
+      </div>
+    </section>
+  </form>;
+}
+
 function CompliancePanel() {
   const { notify } = useStore(); const [reviews, setReviews] = useState([]); const [error, setError] = useState("");
   const load = useCallback(() => api("/api/admin/compliance").then((payload) => { setReviews(payload.reviews || []); setError(""); }).catch((e) => setError(e.message)), []);
@@ -184,6 +284,6 @@ export function AdminDashboardPage() {
   if (authLoading) return <AdminLoading label="Verifying administrator" />;
   if (!user || user.role !== "admin") return <Navigate to="/admin/login" replace />;
   const segment = location.pathname.split("/")[2] || "overview";
-  const panel = segment === "products" ? <ProductsPanel /> : segment === "promotions" ? <PromotionsPanel /> : segment === "orders" ? <OrdersPanel /> : segment === "appointments" ? <AppointmentsPanel /> : segment === "settings" ? <SettingsPanel /> : segment === "compliance" ? <CompliancePanel /> : segment === "database" ? <DatabasePanel /> : <OverviewPanel />;
+  const panel = segment === "products" ? <ProductsPanel /> : segment === "promotions" ? <PromotionsPanel /> : segment === "orders" ? <OrdersPanel /> : segment === "appointments" ? <AppointmentsPanel /> : segment === "settings" ? <SettingsPanel /> : segment === "themes" ? <ThemesPanel /> : segment === "compliance" ? <CompliancePanel /> : segment === "database" ? <DatabasePanel /> : <OverviewPanel />;
   return <div className="admin-shell"><aside className={`admin-sidebar ${navOpen ? "open" : ""}`}><div className="admin-sidebar-brand"><span className="admin-sidebar-gem"><Gem /></span><span><strong>ROYCO</strong><small>CONTROL CENTRE</small></span><button className="icon-button admin-nav-close" type="button" onClick={() => setNavOpen(false)}><X /></button></div><nav>{adminNav.map(([label, href, Icon]) => <NavLink to={href} end={href === "/admin"} key={href} onClick={() => setNavOpen(false)}><Icon /><span>{label}</span></NavLink>)}</nav><div className="admin-sidebar-foot"><Link to="/"><ArrowLeft /> View storefront</Link><button type="button" onClick={logout}><LogOut /> Sign out</button></div></aside><div className="admin-main"><header className="admin-topbar"><button className="icon-button admin-menu-button" type="button" onClick={() => setNavOpen(true)}><Menu /></button><div className="admin-breadcrumb"><span>Royco Jewellers</span><i /> <strong>{adminNav.find(([, href]) => href === location.pathname)?.[0] || "Overview"}</strong></div><div className="admin-user"><span><strong>{user.name || "Royco Admin"}</strong><small>{user.email}</small></span><b>{(user.name || "A")[0]}</b></div></header><main className="admin-content">{panel}</main></div></div>;
 }

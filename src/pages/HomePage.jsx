@@ -2,6 +2,7 @@ import { ArrowRight, BadgeCheck, Diamond, Gem, MapPin, MoveRight, PackageCheck, 
 import { Link } from "react-router-dom";
 import HeroScene from "../components/HeroScene";
 import ProductCard from "../components/ProductCard";
+import { useLanguage } from "../context/LanguageContext";
 import { useStore } from "../context/StoreContext";
 
 const metalEdits = [
@@ -19,6 +20,7 @@ const reviews = [
 
 export default function HomePage() {
   const { products } = useStore();
+  const { t } = useLanguage();
   const featured = products.filter((product) => product.featured).slice(0, 8);
 
   return (
@@ -28,11 +30,11 @@ export default function HomePage() {
         <div className="hero-glow hero-glow-two" />
         <div className="hero-content container-wide">
           <div className="hero-copy">
-            <div className="hero-kicker"><span>Since Chandannagar</span><i /><span>Made for now</span></div>
-            <h1>Every chapter<br />deserves its <em>brilliance.</em></h1>
-            <p className="bengali hero-bengali">প্রতিটি মুহূর্তের জন্য একটু উজ্জ্বলতা</p>
-            <p className="hero-lead">Discover gold, silver, platinum and diamond jewellery—curated with a modern eye and the warmth of a neighbourhood jeweller.</p>
-            <div className="hero-actions"><Link className="button button-gold" to="/shop">Shop the collection <ArrowRight size={17} /></Link><Link className="button button-ghost-light" to="/visit">Visit our showroom</Link></div>
+            <div className="hero-kicker"><span>{t("home.kickerOne", "Since Chandannagar")}</span><i /><span>{t("home.kickerTwo", "Made for now")}</span></div>
+            <h1>{t("home.title", "Every chapter deserves its brilliance.")}</h1>
+            <p className="bengali hero-bengali">{t("home.bengali", "প্রতিটি মুহূর্তের জন্য একটু উজ্জ্বলতা")}</p>
+            <p className="hero-lead">{t("home.lead", "Discover gold, silver, platinum and diamond jewellery—curated with a modern eye and the warmth of a neighbourhood jeweller.")}</p>
+            <div className="hero-actions"><Link className="button button-gold" to="/shop">{t("home.shop", "Shop the collection")} <ArrowRight size={17} /></Link><Link className="button button-ghost-light" to="/visit">{t("home.visit", "Visit our showroom")}</Link></div>
             <div className="hero-trust">
               <div className="avatar-stack"><span>A</span><span>S</span><span>R</span></div>
               <div><strong><Star size={15} fill="currentColor" /> 4.2 from 89 reviews</strong><small>Loved across Chandannagar</small></div>
@@ -76,8 +78,8 @@ export default function HomePage() {
 
       <section className="section products-section">
         <div className="section-heading container-wide section-heading-row">
-          <div><span className="eyebrow">The Royco edit</span><h2>Pieces worth <em>keeping.</em></h2></div>
-          <Link className="line-link" to="/shop">View all jewellery <ArrowRight /></Link>
+          <div><span className="eyebrow">{t("home.featured", "The Royco edit")}</span><h2>{t("home.pieces", "Pieces worth keeping.")}</h2></div>
+          <Link className="line-link" to="/shop">{t("home.viewAll", "View all jewellery")} <ArrowRight /></Link>
         </div>
         <div className="product-grid container-wide">
           {featured.map((product) => <ProductCard product={product} key={product.id} />)}

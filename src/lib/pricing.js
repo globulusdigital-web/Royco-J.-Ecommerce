@@ -1,3 +1,5 @@
+import { defaultThemeSettings } from "./seasonal-themes";
+
 export const GST_RATE = 3;
 export const HIGH_VALUE_THRESHOLD = 200000;
 
@@ -19,6 +21,7 @@ export const fallbackStoreSettings = {
     whatsapp: "https://wa.me/913326835943",
     instagram: "https://www.instagram.com/",
   },
+  theme: defaultThemeSettings,
   updatedAt: new Date().toISOString(),
   published: true,
 };
