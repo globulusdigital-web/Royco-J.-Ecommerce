@@ -16,6 +16,17 @@ test("product validation maps frontend rupees and metal fields to database value
   assert.equal(product.slug, "lotus-gold-ring");
 });
 
+test("product validation accepts an admin-defined material and rate linkage", () => {
+  const product = validateProduct({
+    name: "Rose Gold Orbit Ring", sku: "RJ-RG-18", metal: "Rose Gold", rateKey: "rose-gold-18k",
+    category: "Rings", purity: "18K", description: "Custom alloy formula product", weightG: 5,
+    pricingMode: "dynamic", price: 1, compareAtPrice: 0, stock: 4, imageUrl: "/assets/products/gold-ring.webp",
+  });
+  assert.equal(product.material, "Rose Gold");
+  assert.equal(product.rateKey, "rose-gold-18k");
+  assert.equal(product.pricingMode, "dynamic");
+});
+
 test("checkout consolidates duplicate IDs and maps frontend payment methods", () => {
   const checkout = validateCheckout({
     items: [{ productId: "7", quantity: 1 }, { productId: 7, quantity: 2 }], paymentMethod: "upi_transfer",

@@ -33,6 +33,7 @@ export default function App() {
             <Route path="/visit" element={<VisitPage />} />
             <Route path="/jyotishi" element={<JyotishiPage />} />
             <Route path="/appointments" element={<AppointmentPage />} />
+            <Route path="/book-appointment" element={<AppointmentPage />} />
             <Route path="/live-rates" element={<LiveRatesPage />} />
             <Route path="/login" element={<AuthPage />} />
             <Route path="/checkout" element={<CheckoutPage />} />

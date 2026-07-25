@@ -61,6 +61,7 @@ export function serializeProduct(row) {
     purity: row.purity || "",
     weightG: number(row.weight_grams ?? row.weightG ?? row.weight_g),
     pricingMode: row.pricing_mode || row.pricingMode || "manual",
+    rateKey: row.rate_key || row.rateKey || "",
     makingChargeType: row.making_charge_type || row.makingChargeType || "",
     makingChargeValue: number(row.making_charge_value ?? row.makingChargeValue, 0),
     caratWeight: number(row.carat_weight ?? row.caratWeight, 0),

@@ -19,14 +19,29 @@ export function json(data, status = 200, headers = {}) {
 }
 
 export function ok(data, status = 200, headers = {}) {
-  return json({ data }, status, headers);
+  return json({ success: true, data }, status, headers);
 }
 
 export function fail(error) {
   const status = Number(error?.status) || 500;
   const code = error?.code || "internal_error";
-  const message = status >= 500 && code === "internal_error" ? "An unexpected server error occurred" : error?.message;
-  return json({ error: { code, message, ...(error?.details ? { details: error.details } : {}) } }, status);
+  const message = status >= 500 ? "Internal Server Error" : (error?.message || "Request failed");
+  return json({
+    success: false,
+    message,
+    error: { code, message, ...(error?.details ? { details: error.details } : {}) },
+  }, status);
+}
+
+export function asyncHandler(handler) {
+  if (typeof handler !== "function") throw new TypeError("asyncHandler requires a function");
+  return async (...args) => {
+    try {
+      return await handler(...args);
+    } catch (error) {
+      return fail(error);
+    }
+  };
 }
 
 export async function readJson(request, maxBytes = 256 * 1024) {

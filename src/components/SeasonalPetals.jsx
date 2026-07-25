@@ -189,9 +189,12 @@ export default function SeasonalPetals() {
   }, [resolved.id]);
 
   const showOffer = resolved.id !== "default" && resolved.offer;
+  const campaignArtwork = resolved.id === "default"
+    ? resolved.offer?.bannerImageUrl
+    : (resolved.offer?.bannerImageUrl || "/assets/themes/royco-festival-tapestry.png");
   return (
     <>
-      <div className={`seasonal-theme-backdrop seasonal-${resolved.background}`} style={resolved.offer?.bannerImageUrl ? { backgroundImage: `linear-gradient(rgba(255,255,255,.78), rgba(255,255,255,.9)), url("${resolved.offer.bannerImageUrl}")`, backgroundPosition: "center", backgroundSize: "cover" } : undefined} aria-hidden="true">
+      <div className={`seasonal-theme-backdrop seasonal-${resolved.background}`} style={campaignArtwork ? { backgroundImage: `linear-gradient(rgba(20,3,12,.58), rgba(42,5,24,.76)), url("${campaignArtwork}")`, backgroundPosition: campaignArtwork === "/assets/themes/royco-festival-tapestry.png" ? (resolved.artworkPosition || "center") : "center", backgroundSize: "cover" } : undefined} aria-hidden="true">
         <span>{resolved.motif}</span>
       </div>
       <canvas ref={canvasRef} className="seasonal-petals" aria-hidden="true" />
@@ -202,7 +205,10 @@ export default function SeasonalPetals() {
             <strong>{resolved.title}</strong>
             {resolved.promotionText && <small>{resolved.promotionText}</small>}
           </div>
-          {resolved.offer.discountCode && <b>{resolved.offer.discountCode}</b>}
+          <span className="seasonal-offer-actions">
+            {(resolved.offer.discountPercent > 0 || resolved.offer.discountCode) && <b>{resolved.offer.discountPercent > 0 ? `${resolved.offer.discountPercent}% OFF` : resolved.offer.discountCode}</b>}
+            {resolved.offer.attachmentUrl && <a href={resolved.offer.attachmentUrl} target="_blank" rel="noreferrer">Offer terms</a>}
+          </span>
         </aside>
       )}
     </>

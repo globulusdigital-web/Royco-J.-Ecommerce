@@ -2,6 +2,11 @@ import { Activity, ArrowLeft, ArrowRight, BarChart3, Box, CalendarDays, Check, C
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, Navigate, NavLink, useLocation, useNavigate } from "react-router-dom";
 import Modal from "../components/Modal";
+import DynamicMaterialsManager from "../components/admin/DynamicMaterialsManager";
+import ProductForm from "../components/admin/ProductForm";
+import CampaignThemesPanel from "../components/admin/CampaignThemesPanel";
+import ComplianceReviewPanel from "../components/admin/ComplianceReviewPanel";
+import AppointmentManager from "../components/admin/AppointmentManager";
 import { useStore } from "../context/StoreContext";
 import { categories, metals } from "../data/fallbackProducts";
 import { api } from "../lib/api";
@@ -72,7 +77,7 @@ function AdminEmpty({ icon: Icon, label }) { return <div className="admin-empty"
 
 const emptyProduct = { name: "", bengaliName: "", slug: "", sku: "", metal: "Gold", category: "Rings", purity: "22K / 916", weightG: "", price: "", compareAtPrice: "", stock: "", pricingMode: "manual", makingChargeType: "", makingChargeValue: 0, caratWeight: 0, diamondTier: "", imageUrl: "/assets/products/gold-ring.webp", description: "", featured: false, active: true };
 
-function ProductForm({ product, onDone }) {
+function LegacyProductForm({ product, onDone }) {
   const { notify } = useStore();
   const [form, setForm] = useState(product ? normalizeProduct(product) : emptyProduct);
   const [loading, setLoading] = useState(false);
@@ -163,7 +168,7 @@ function SettingsPanel() {
   const making = (metal, key, value) => setForm((current) => ({ ...current, makingCharges: { ...current.makingCharges, [metal]: { ...current.makingCharges[metal], [key]: key === "value" ? Number(value) : value } } }));
   const social = (key, value) => setForm((current) => ({ ...current, social: { ...current.social, [key]: value } }));
   const save = async (event) => { event.preventDefault(); try { const payload = await api("/api/admin/store-settings", { method: "PUT", body: form }); setForm(payload.settings); await reloadCatalog(); notify("Rates, making charges and social links published."); } catch (e) { setError(e.message); } };
-  return <form className="admin-panel settings-panel" onSubmit={save}><PanelHeader eyebrow="Daily publishing" title="Rates & store settings" action={<button className="button button-dark" type="submit"><Save /> Publish changes</button>} />{error && <AdminError message={error} />}<section className="admin-card"><div className="card-heading"><div><span className="eyebrow">Market reference</span><h3>Daily rates</h3></div><CircleDollarSign /></div><div className="settings-grid">{[["gold24k", "Gold 24K / gram"], ["gold22k", "Gold 22K / gram"], ["gold18k", "Gold 18K / gram"], ["silverGram", "Silver / gram"], ["silverKg", "Silver / kg"], ["platinumGram", "Platinum / gram"]].map(([key, label]) => <label key={key}><span>{label}</span><input type="number" min="0" value={form.rates[key]} onChange={(e) => rate(key, e.target.value)} /></label>)}{Object.entries(form.rates.diamond).map(([key, value]) => <label key={key}><span>Diamond {key} / carat</span><input type="number" min="0" value={value} onChange={(e) => diamond(key, e.target.value)} /></label>)}</div></section><section className="admin-card"><div className="card-heading"><div><span className="eyebrow">Pricing engine</span><h3>Default making charges</h3></div><Settings2 /></div><div className="settings-grid">{Object.entries(form.makingCharges).map(([metal, config]) => <div className="making-setting" key={metal}><strong>{metal}</strong><select value={config.type} onChange={(e) => making(metal, "type", e.target.value)}><option value="percent">Percentage</option><option value="flat">Flat amount</option></select><input type="number" min="0" value={config.value} onChange={(e) => making(metal, "value", e.target.value)} /></div>)}</div></section><section className="admin-card"><div className="card-heading"><div><span className="eyebrow">Brand profiles</span><h3>Social media accounts</h3></div><Sparkles /></div><div className="settings-grid">{Object.entries(form.social).map(([key, value]) => <label key={key}><span>{key === "x" ? "X (Twitter)" : key}</span><input type="url" value={value} onChange={(e) => social(key, e.target.value)} /></label>)}</div></section></form>;
+  return <form className="admin-panel settings-panel" onSubmit={save}><PanelHeader eyebrow="Daily publishing" title="Rates & store settings" action={<button className="button button-dark" type="submit"><Save /> Publish changes</button>} />{error && <AdminError message={error} />}<section className="admin-card"><div className="card-heading"><div><span className="eyebrow">Market reference</span><h3>Daily rates</h3></div><CircleDollarSign /></div><div className="settings-grid">{[["gold24k", "Gold 24K / gram"], ["gold22k", "Gold 22K / gram"], ["gold18k", "Gold 18K / gram"], ["silverGram", "Silver / gram"], ["silverKg", "Silver / kg"], ["platinumGram", "Platinum / gram"]].map(([key, label]) => <label key={key}><span>{label}</span><input type="number" min="0" value={form.rates[key]} onChange={(e) => rate(key, e.target.value)} /></label>)}{Object.entries(form.rates.diamond).map(([key, value]) => <label key={key}><span>Diamond {key} / carat</span><input type="number" min="0" value={value} onChange={(e) => diamond(key, e.target.value)} /></label>)}</div></section><DynamicMaterialsManager materials={form.materials || []} onChange={(materials) => setForm((current) => ({ ...current, materials }))} /><section className="admin-card"><div className="card-heading"><div><span className="eyebrow">Pricing engine</span><h3>Default making charges</h3></div><Settings2 /></div><div className="settings-grid">{Object.entries(form.makingCharges).map(([metal, config]) => <div className="making-setting" key={metal}><strong>{metal}</strong><select value={config.type} onChange={(e) => making(metal, "type", e.target.value)}><option value="percent">Percentage</option><option value="flat">Flat amount</option></select><input type="number" min="0" value={config.value} onChange={(e) => making(metal, "value", e.target.value)} /></div>)}</div></section><section className="admin-card"><div className="card-heading"><div><span className="eyebrow">Brand profiles</span><h3>Social media accounts</h3></div><Sparkles /></div><div className="settings-grid">{Object.entries(form.social).map(([key, value]) => <label key={key}><span>{key === "x" ? "X (Twitter)" : key}</span><input type="url" value={value} onChange={(e) => social(key, e.target.value)} /></label>)}</div></section></form>;
 }
 
 function dateTimeInput(value) {
@@ -188,7 +193,7 @@ function normalizedTheme(theme = {}) {
   };
 }
 
-function ThemesPanel() {
+function LegacyThemesPanel() {
   const { notify, reloadCatalog } = useStore();
   const [theme, setTheme] = useState(null);
   const [selectedId, setSelectedId] = useState("durga-puja");
@@ -284,6 +289,6 @@ export function AdminDashboardPage() {
   if (authLoading) return <AdminLoading label="Verifying administrator" />;
   if (!user || user.role !== "admin") return <Navigate to="/admin/login" replace />;
   const segment = location.pathname.split("/")[2] || "overview";
-  const panel = segment === "products" ? <ProductsPanel /> : segment === "promotions" ? <PromotionsPanel /> : segment === "orders" ? <OrdersPanel /> : segment === "appointments" ? <AppointmentsPanel /> : segment === "settings" ? <SettingsPanel /> : segment === "themes" ? <ThemesPanel /> : segment === "compliance" ? <CompliancePanel /> : segment === "database" ? <DatabasePanel /> : <OverviewPanel />;
+  const panel = segment === "products" ? <ProductsPanel /> : segment === "promotions" ? <PromotionsPanel /> : segment === "orders" ? <OrdersPanel /> : segment === "appointments" ? <AppointmentManager /> : segment === "settings" ? <SettingsPanel /> : segment === "themes" ? <CampaignThemesPanel /> : segment === "compliance" ? <ComplianceReviewPanel /> : segment === "database" ? <DatabasePanel /> : <OverviewPanel />;
   return <div className="admin-shell"><aside className={`admin-sidebar ${navOpen ? "open" : ""}`}><div className="admin-sidebar-brand"><span className="admin-sidebar-gem"><Gem /></span><span><strong>ROYCO</strong><small>CONTROL CENTRE</small></span><button className="icon-button admin-nav-close" type="button" onClick={() => setNavOpen(false)}><X /></button></div><nav>{adminNav.map(([label, href, Icon]) => <NavLink to={href} end={href === "/admin"} key={href} onClick={() => setNavOpen(false)}><Icon /><span>{label}</span></NavLink>)}</nav><div className="admin-sidebar-foot"><Link to="/"><ArrowLeft /> View storefront</Link><button type="button" onClick={logout}><LogOut /> Sign out</button></div></aside><div className="admin-main"><header className="admin-topbar"><button className="icon-button admin-menu-button" type="button" onClick={() => setNavOpen(true)}><Menu /></button><div className="admin-breadcrumb"><span>Royco Jewellers</span><i /> <strong>{adminNav.find(([, href]) => href === location.pathname)?.[0] || "Overview"}</strong></div><div className="admin-user"><span><strong>{user.name || "Royco Admin"}</strong><small>{user.email}</small></span><b>{(user.name || "A")[0]}</b></div></header><main className="admin-content">{panel}</main></div></div>;
 }

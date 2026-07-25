@@ -27,6 +27,7 @@ export function normalizeProduct(product) {
     price: Number(product.price ?? 0),
     weightG: Number(product.weightG ?? product.weight_g ?? 0),
     makingChargeValue: Number(product.makingChargeValue ?? product.making_charge_value ?? 0),
+    rateKey: product.rateKey ?? product.rate_key ?? "",
     caratWeight: Number(product.caratWeight ?? product.carat_weight ?? 0),
     stock: Number(product.stock ?? 0),
     featured: Boolean(product.featured),

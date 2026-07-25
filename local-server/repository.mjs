@@ -49,6 +49,7 @@ function seedProduct(product, index, createdAt) {
     purity: product.purity || "",
     weight_grams: Number(product.weightG || 0),
     pricing_mode: product.pricingMode || "manual",
+    rate_key: product.rateKey || "",
     making_charge_type: product.makingChargeType || "",
     making_charge_value: Number(product.makingChargeValue || 0),
     carat_weight: Number(product.caratWeight || 0),
@@ -315,12 +316,13 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
         .reduce((sum, order) => sum + Number(order.total_paise || 0), 0);
     },
 
-    async createComplianceReview({ orderId, userId, documentType, panNumber, form60Declaration, phone, combinedTotalPaise }) {
+    async createComplianceReview({ orderId, userId, documentType, panNumber, form60Declaration, documentUrl, phone, combinedTotalPaise }) {
       return mutate((store) => {
         const createdAt = nowIso();
         const review = {
           id: randomUUID(), order_id: orderId, user_id: userId, document_type: documentType,
           pan_number: panNumber || null, form60_declaration: form60Declaration || null,
+          document_url: documentUrl || null,
           phone, combined_total_paise: combinedTotalPaise, status: "pending",
           admin_notes: "", created_at: createdAt, updated_at: createdAt,
         };
@@ -490,6 +492,7 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
           name: product.name, bengali_name: product.bengaliName || "",
           description: product.description, material: product.material, category: product.category,
           purity: product.purity, weight_grams: product.weightG, pricing_mode: product.pricingMode,
+          rate_key: product.rateKey,
           making_charge_type: product.makingChargeType, making_charge_value: product.makingChargeValue,
           carat_weight: product.caratWeight, diamond_tier: product.diamondTier, price_paise: product.pricePaise,
           compare_at_price_paise: product.compareAtPricePaise, stock: product.stock,
@@ -511,6 +514,7 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
           bengali_name: product.bengaliName || "", description: product.description,
           material: product.material, category: product.category, purity: product.purity,
           weight_grams: product.weightG, pricing_mode: product.pricingMode,
+          rate_key: product.rateKey,
           making_charge_type: product.makingChargeType, making_charge_value: product.makingChargeValue,
           carat_weight: product.caratWeight, diamond_tier: product.diamondTier, price_paise: product.pricePaise,
           compare_at_price_paise: product.compareAtPricePaise, stock: product.stock,
@@ -702,6 +706,22 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
         const appointment = store.appointments.find((row) => String(row.id) === String(id));
         if (!appointment) return null;
         appointment.status = status;
+        appointment.updated_at = nowIso();
+        return serializeAppointment(appointment);
+      });
+    },
+
+    async updateAppointmentAdmin(id, { status = null, scheduledAt = null }) {
+      return mutate((store) => {
+        const appointment = store.appointments.find((row) => String(row.id) === String(id));
+        if (!appointment) return null;
+        if (scheduledAt && store.appointments.some((row) => String(row.id) !== String(id)
+          && row.status !== "cancelled"
+          && new Date(row.scheduled_at).valueOf() === new Date(scheduledAt).valueOf())) {
+          throw new ApiError(409, "appointment_unavailable", "That appointment time is already booked.");
+        }
+        if (status) appointment.status = status;
+        if (scheduledAt) appointment.scheduled_at = scheduledAt;
         appointment.updated_at = nowIso();
         return serializeAppointment(appointment);
       });

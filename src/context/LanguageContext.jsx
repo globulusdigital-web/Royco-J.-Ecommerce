@@ -63,6 +63,10 @@ const dictionaries = {
     "auth.code": "৬ সংখ্যার OTP", "auth.verify": "যাচাই করে চালিয়ে যান", "auth.verifying": "যাচাই হচ্ছে…",
     "auth.change": "নম্বর বদলান", "auth.resend": "আবার কোড পাঠান", "auth.sent": "কোড পাঠানো হয়েছে",
     "auth.secure": "OTP-সুরক্ষিত প্রবেশ", "backToTop": "উপরে ফিরুন",
+    "footer.tagline": "চন্দননগরের হৃদয় থেকে, আপনার স্মরণীয় মুহূর্তের গয়না।", "footer.collections": "সংগ্রহ",
+    "footer.visit": "শোরুমে আসুন", "footer.orders": "আমার অর্ডার", "footer.admin": "অ্যাডমিন প্রবেশ",
+    "footer.secure": "সুরক্ষিত অর্ডার ও বিমাকৃত ডেলিভারি", "jyotishi.certification": "সার্টিফিকেশন",
+    "jyotishi.energization": "অভিমন্ত্রিত",
   },
   hi: {
     "nav.new": "नया संग्रह", "nav.gold": "सोना", "nav.diamond": "हीरा", "nav.silver": "चाँदी",
@@ -117,6 +121,10 @@ const dictionaries = {
     "auth.code": "6 अंकों का OTP", "auth.verify": "सत्यापित कर आगे बढ़ें", "auth.verifying": "सत्यापन हो रहा है…",
     "auth.change": "नंबर बदलें", "auth.resend": "कोड फिर भेजें", "auth.sent": "कोड भेजा गया",
     "auth.secure": "OTP-सुरक्षित प्रवेश", "backToTop": "ऊपर जाएँ",
+    "footer.tagline": "चंदननगर के हृदय से, आपके यादगार पलों के लिए आभूषण।", "footer.collections": "संग्रह",
+    "footer.visit": "शोरूम आएँ", "footer.orders": "मेरे ऑर्डर", "footer.admin": "एडमिन प्रवेश",
+    "footer.secure": "सुरक्षित ऑर्डर और बीमित डिलीवरी", "jyotishi.certification": "प्रमाणन",
+    "jyotishi.energization": "अभिमंत्रित",
   },
 };
 

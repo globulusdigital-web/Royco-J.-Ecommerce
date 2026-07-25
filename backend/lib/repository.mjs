@@ -39,7 +39,7 @@ function transientDatabaseError(error) {
 }
 
 export async function withDatabaseRetry(operation, {
-  attempts = 5,
+  attempts = 10,
   baseDelayMs = 120,
   maxDelayMs = 2_500,
   jitterMs = 80,
@@ -188,12 +188,12 @@ export function createDatabaseRepository(db) {
       return Number(resultRows(result)[0]?.total || 0);
     },
 
-    async createComplianceReview({ orderId, userId, documentType, panNumber, form60Declaration, phone, combinedTotalPaise }) {
+    async createComplianceReview({ orderId, userId, documentType, panNumber, form60Declaration, documentUrl, phone, combinedTotalPaise }) {
       const result = await query(
         `INSERT INTO compliance_reviews
-          (id, order_id, user_id, document_type, pan_number, form60_declaration, phone, combined_total_paise)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-        [randomUUID(), orderId, userId, documentType, panNumber || null, form60Declaration || null, phone, combinedTotalPaise],
+          (id, order_id, user_id, document_type, pan_number, form60_declaration, document_url, phone, combined_total_paise)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [randomUUID(), orderId, userId, documentType, panNumber || null, form60Declaration || null, documentUrl || null, phone, combinedTotalPaise],
       );
       return resultRows(result)[0];
     },
@@ -328,14 +328,14 @@ export function createDatabaseRepository(db) {
       const result = await query(
         `INSERT INTO products
           (sku, slug, name, bengali_name, description, material, category, purity, weight_grams,
-           pricing_mode, making_charge_type, making_charge_value, carat_weight, diamond_tier,
+           pricing_mode, rate_key, making_charge_type, making_charge_value, carat_weight, diamond_tier,
            price_paise, compare_at_price_paise, stock, image_url, gallery, featured, active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-           $15, $16, $17, $18, $19::jsonb, $20, $21)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+           $16, $17, $18, $19, $20::jsonb, $21, $22)
          RETURNING *`,
         [product.sku, product.slug, product.name, product.bengaliName, product.description,
           product.material, product.category, product.purity, product.weightG, product.pricingMode,
-          product.makingChargeType, product.makingChargeValue, product.caratWeight, product.diamondTier,
+          product.rateKey, product.makingChargeType, product.makingChargeValue, product.caratWeight, product.diamondTier,
           product.pricePaise, product.compareAtPricePaise, product.stock, product.imageUrl,
           JSON.stringify(product.gallery), product.featured, product.active],
       );
@@ -347,14 +347,14 @@ export function createDatabaseRepository(db) {
         `UPDATE products SET
            sku = $2, slug = $3, name = $4, bengali_name = $5, description = $6, material = $7,
            category = $8, purity = $9, weight_grams = $10, pricing_mode = $11,
-           making_charge_type = $12, making_charge_value = $13, carat_weight = $14, diamond_tier = $15,
-           price_paise = $16, compare_at_price_paise = $17, stock = $18, image_url = $19,
-           gallery = $20::jsonb, featured = $21, active = $22, updated_at = NOW()
+           rate_key = $12, making_charge_type = $13, making_charge_value = $14, carat_weight = $15, diamond_tier = $16,
+           price_paise = $17, compare_at_price_paise = $18, stock = $19, image_url = $20,
+           gallery = $21::jsonb, featured = $22, active = $23, updated_at = NOW()
          WHERE id = $1
          RETURNING *`,
         [id, product.sku, product.slug, product.name, product.bengaliName, product.description,
           product.material, product.category, product.purity, product.weightG, product.pricingMode,
-          product.makingChargeType, product.makingChargeValue, product.caratWeight, product.diamondTier,
+          product.rateKey, product.makingChargeType, product.makingChargeValue, product.caratWeight, product.diamondTier,
           product.pricePaise, product.compareAtPricePaise, product.stock, product.imageUrl,
           JSON.stringify(product.gallery), product.featured, product.active],
       );
@@ -492,6 +492,18 @@ export function createDatabaseRepository(db) {
       const result = await query(
         "UPDATE appointments SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *",
         [id, status],
+      );
+      return serializeAppointment(resultRows(result)[0]);
+    },
+
+    async updateAppointmentAdmin(id, { status = null, scheduledAt = null }) {
+      const result = await query(
+        `UPDATE appointments SET
+           status = COALESCE($2, status),
+           scheduled_at = COALESCE($3::timestamptz, scheduled_at),
+           updated_at = NOW()
+         WHERE id = $1 RETURNING *`,
+        [id, status, scheduledAt],
       );
       return serializeAppointment(resultRows(result)[0]);
     },
@@ -768,7 +780,7 @@ export async function getProductionRepository() {
     console.error("Render Postgres pool error", error.stack || error);
   });
   await withDatabaseRetry(() => pool.query("SELECT 1 AS connected"), {
-    attempts: Math.max(3, Number(process.env.DATABASE_CONNECT_ATTEMPTS) || 6),
+    attempts: Math.max(3, Number(process.env.DATABASE_CONNECT_ATTEMPTS) || 10),
     baseDelayMs: 250,
     maxDelayMs: 5_000,
     onRetry: ({ attempt, delayMs, error }) =>

@@ -9,6 +9,7 @@ import { getLocalRepository } from "./repository.mjs";
 import { getLocalFileStorage } from "./storage.mjs";
 import { HttpBridgeError, toWebRequest, writeWebResponse } from "./http-bridge.mjs";
 import { installProcessSafety, runtimeSafetyState } from "../backend/lib/runtime-safety.mjs";
+import { createRollingLogger } from "../backend/lib/rolling-logger.mjs";
 
 const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultProjectRoot = path.resolve(moduleDirectory, "..");
@@ -16,7 +17,10 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PRODUCTION_HOST = "0.0.0.0";
 const DEFAULT_PORT = 4173;
 const LOCAL_SESSION_SECRET = "royco-local-session-secret-2026-change-for-production";
-installProcessSafety();
+const runtimeLogger = createRollingLogger({
+  directory: process.env.ROYCO_LOG_DIR || path.join(defaultProjectRoot, "local-server", "logs"),
+});
+installProcessSafety({ logger: runtimeLogger });
 
 const CONTENT_TYPES = Object.freeze({
   ".avif": "image/avif",
@@ -31,6 +35,7 @@ const CONTENT_TYPES = Object.freeze({
   ".map": "application/json; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
   ".png": "image/png",
+  ".pdf": "application/pdf",
   ".svg": "image/svg+xml",
   ".txt": "text/plain; charset=utf-8",
   ".webmanifest": "application/manifest+json",
@@ -69,7 +74,7 @@ function jsonError(response, status, code, message) {
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.setHeader("Cache-Control", "no-store");
   securityHeaders(response);
-  response.end(JSON.stringify({ error: { code, message } }));
+  response.end(JSON.stringify({ success: false, message, error: { code, message } }));
 }
 
 function decodePathname(url) {
@@ -178,7 +183,7 @@ export function createLocalApp({
 
       if (pathname.startsWith("/uploads/")) {
         const uploadName = pathname.slice("/uploads/".length);
-        if (!/^[a-f0-9-]{36}\.(?:jpg|jpeg|png|webp)$/i.test(uploadName)) {
+        if (!/^[a-f0-9-]{36}\.(?:jpg|jpeg|png|webp|pdf)$/i.test(uploadName)) {
           jsonError(response, 404, "not_found", "Image not found");
           return;
         }
@@ -218,7 +223,7 @@ export function createLocalApp({
       } else {
         response.destroy();
       }
-      if (!(error instanceof HttpBridgeError)) console.error("Royco local server error", error);
+      if (!(error instanceof HttpBridgeError)) runtimeLogger.error("Royco local server error", error);
     }
   });
 
@@ -244,7 +249,7 @@ export async function start(options = {}) {
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
   const url = `http://${hostname}:${actualPort}`;
-  console.log(`Royco Jewellers is running at ${url}`, runtimeSafetyState());
+  runtimeLogger.info(`Royco Jewellers is running at ${url}`, runtimeSafetyState());
   return { server, url };
 }
 

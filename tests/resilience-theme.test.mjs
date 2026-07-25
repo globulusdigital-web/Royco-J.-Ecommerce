@@ -46,6 +46,18 @@ test("scheduled offers override a manual seasonal theme during their active wind
   assert.equal(active.title, "दिवाली ऑफर");
 });
 
+test("paused campaigns fall back to default petals without disabling the theme engine", () => {
+  const settings = {
+    ...defaultThemeSettings,
+    activeTheme: "diwali",
+    offers: defaultThemeSettings.offers.map((offer) => offer.id === "diwali"
+      ? { ...offer, enabled: true, status: "paused" }
+      : offer),
+  };
+  const active = resolveSeasonalTheme(settings, "en", new Date("2026-10-20T12:00:00.000Z"));
+  assert.equal(active.id, "default");
+});
+
 test("theme settings merge without removing pricing and compliance settings", () => {
   const merged = mergeStoreSettings(DEFAULT_STORE_SETTINGS, {
     theme: { animationsEnabled: false, density: 22, activeTheme: "durga-puja" },

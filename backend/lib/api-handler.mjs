@@ -48,6 +48,8 @@ const APPOINTMENT_LANGUAGES = Object.freeze(["Bengali", "English", "Hindi"]);
 const APPOINTMENT_TIMES = Object.freeze(["10:30", "11:30", "12:30", "15:30", "16:30", "17:30"]);
 const IMAGE_EXTENSIONS = Object.freeze({ "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" });
 const MAX_UPLOAD_BYTES = Math.floor(3.5 * 1024 * 1024);
+const CAMPAIGN_ASSET_EXTENSIONS = Object.freeze({ ...IMAGE_EXTENSIONS, "application/pdf": "pdf" });
+const MAX_CAMPAIGN_ASSET_BYTES = 8 * 1024 * 1024;
 const THEME_IDS = new Set(["default", ...SEASONAL_THEME_OFFERS.map((offer) => offer.id)]);
 
 let productionDependencies;
@@ -112,7 +114,7 @@ function validUrl(value, { required = true } = {}) {
     const url = new URL(source);
     if (url.protocol === "https:" && source.length <= 2048) return source;
   } catch {}
-  throw new ApiError(422, "validation_error", "Image URL must be a local path or secure HTTPS URL");
+  throw new ApiError(422, "validation_error", "Asset URL must be a local path or secure HTTPS URL");
 }
 
 function validateProduct(body) {
@@ -121,11 +123,14 @@ function validateProduct(body) {
   if (!/^[A-Z0-9][A-Z0-9._-]*$/.test(sku)) throw new ApiError(422, "validation_error", "SKU contains unsupported characters");
   const slug = slugify(body.slug || name);
   if (!slug) throw new ApiError(422, "validation_error", "A valid product slug is required");
-  const material = enumValue(body.material ?? body.metal, MATERIALS);
+  const materialInput = requiredText(body.material ?? body.metal, "Material", 2, 80);
+  const material = enumValue(materialInput, MATERIALS) || materialInput;
   const category = enumValue(body.category, CATEGORIES);
-  if (!material || !category) throw new ApiError(422, "validation_error", "Select a valid metal and category");
+  if (!/^[\p{L}\p{N} .&+()/-]+$/u.test(material) || !category) throw new ApiError(422, "validation_error", "Select a valid material and category");
+  const rateKey = optionalText(body.rateKey ?? body.rate_key, "Rate linkage", 64);
+  if (rateKey && !/^[a-z0-9][a-z0-9-]{1,63}$/.test(rateKey)) throw new ApiError(422, "validation_error", "Select a valid material rate");
   const price = positiveMoneyPaise(body.pricePaise, body.price, "price");
-  const compare = positiveMoneyPaise(body.compareAtPricePaise, body.compareAtPrice, "compareAtPrice");
+  const compare = positiveMoneyPaise(body.compareAtPricePaise, body.compareAtPrice ?? 0, "compareAtPrice");
   if (price.error || compare.error) throw new ApiError(422, "validation_error", price.error || compare.error);
   const compareAtPricePaise = compare.value > 0 ? compare.value : null;
   if (compareAtPricePaise != null && compareAtPricePaise < price.value) {
@@ -149,6 +154,7 @@ function validateProduct(body) {
     description: requiredText(body.description, "Description", 2, 4000),
     weightG: Math.round(weightG * 1000) / 1000,
     pricingMode: body.pricingMode === "dynamic" ? "dynamic" : "manual",
+    rateKey,
     makingChargeType: body.makingChargeType === "flat" ? "flat" : body.makingChargeType === "percent" ? "percent" : "",
     makingChargeValue: Math.max(0, Number(body.makingChargeValue || 0)),
     caratWeight: Math.max(0, Number(body.caratWeight || 0)),
@@ -231,6 +237,7 @@ function validateCheckout(body) {
       documentType: body.compliance.documentType === "form60" ? "form60" : "pan",
       panNumber: String(body.compliance.panNumber || "").trim().toUpperCase(),
       form60Declaration: String(body.compliance.form60Declaration || "").trim().slice(0, 1200),
+      documentUrl: validUrl(body.compliance.documentUrl, { required: false }),
       otpToken: String(body.compliance.otpToken || ""),
     } : null,
     paymentMethod,
@@ -262,6 +269,45 @@ function validateStoreSettingsPatch(body) {
   for (const key of ["rates", "makingCharges", "social", "published"]) {
     if (body[key] !== undefined) patch[key] = body[key];
   }
+  if (body.materials !== undefined) {
+    if (!Array.isArray(body.materials) || body.materials.length > 50) {
+      throw new ApiError(422, "validation_error", "Material rates must contain no more than 50 entries");
+    }
+    const seenMaterials = new Set();
+    patch.materials = body.materials.map((material, index) => {
+      const id = String(material?.id || "").trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(id) || seenMaterials.has(id)) {
+        throw new ApiError(422, "validation_error", `Material ${index + 1} requires a unique identifier`);
+      }
+      seenMaterials.add(id);
+      const name = requiredText(material.name, "Material name", 2, 100);
+      const productMetal = requiredText(material.productMetal || material.name, "Product material", 2, 80);
+      const rate = Number(material.rate);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 1_000_000_000) {
+        throw new ApiError(422, "validation_error", `${name} has an invalid rate`);
+      }
+      const currency = String(material.currency || "INR").trim().toUpperCase();
+      if (!/^[A-Z]{3}$/.test(currency)) throw new ApiError(422, "validation_error", `${name} has an invalid currency`);
+      const unit = enumValue(material.unit || "gram", ["gram", "kg", "carat", "piece", "tola"]);
+      if (!unit) throw new ApiError(422, "validation_error", `${name} has an invalid unit`);
+      const chargeType = enumValue(material.makingCharge?.type || "percent", ["percent", "flat"]);
+      const chargeValue = Number(material.makingCharge?.value || 0);
+      if (!chargeType || !Number.isFinite(chargeValue) || chargeValue < 0 || chargeValue > 1_000_000_000) {
+        throw new ApiError(422, "validation_error", `${name} has an invalid making charge`);
+      }
+      return {
+        id,
+        name,
+        productMetal,
+        rate: Math.round(rate * 100) / 100,
+        currency,
+        unit,
+        makingCharge: { type: chargeType, value: Math.round(chargeValue * 100) / 100 },
+        visible: material.visible !== false,
+        system: material.system === true,
+      };
+    });
+  }
   if (body.theme === undefined) return patch;
   if (!body.theme || typeof body.theme !== "object" || Array.isArray(body.theme)) {
     throw new ApiError(422, "validation_error", "Theme settings must be an object");
@@ -288,9 +334,11 @@ function validateStoreSettingsPatch(body) {
       seen.add(id);
       const title = {};
       const promotionText = {};
+      const terms = {};
       for (const language of ["en", "bn", "hi"]) {
         title[language] = optionalText(offer.title?.[language], `${language} offer title`, 160);
         promotionText[language] = optionalText(offer.promotionText?.[language], `${language} promotion text`, 500);
+        terms[language] = optionalText(offer.terms?.[language], `${language} offer terms`, 1500);
       }
       const discountCode = optionalText(offer.discountCode, "Discount code", 32).toUpperCase();
       if (discountCode && !/^[A-Z0-9_-]+$/.test(discountCode)) {
@@ -301,13 +349,20 @@ function validateStoreSettingsPatch(body) {
       if (startAt && endAt && new Date(endAt) <= new Date(startAt)) {
         throw new ApiError(422, "validation_error", "Offer end date must be after its start date");
       }
+      const discountPercent = integer(offer.discountPercent ?? 0, { field: "Offer discount", min: 0, max: 100 });
+      if (discountPercent.error) throw new ApiError(422, "validation_error", discountPercent.error);
+      const status = enumValue(offer.status || (offer.enabled ? "running" : "stopped"), ["running", "paused", "stopped"]);
       return {
         id,
         enabled: offer.enabled === true,
+        status,
         title,
         promotionText,
+        terms,
         discountCode,
+        discountPercent: discountPercent.value,
         bannerImageUrl: validUrl(offer.bannerImageUrl, { required: false }),
+        attachmentUrl: validUrl(offer.attachmentUrl, { required: false }),
         startAt,
         endAt,
       };
@@ -425,7 +480,7 @@ async function applyCheckoutRules(repository, user, checkout, env) {
   }
   const compliance = checkout.compliance;
   const documentValid = compliance?.documentType === "pan"
-    ? validPan(compliance.panNumber)
+    ? validPan(compliance.panNumber) && Boolean(compliance.documentUrl)
     : compliance?.documentType === "form60" && compliance.form60Declaration.length >= 20;
   if (!documentValid) {
     throw new ApiError(422, "compliance_document_required", "Enter a valid PAN or complete the Form 60 declaration.");
@@ -518,6 +573,12 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
     code: "sensitive_rate_limited",
     message: "Too many verification or sign-in attempts. Please wait before trying again.",
   });
+  const checkoutLimiter = createRateLimiter({
+    windowMs: Number(env.CHECKOUT_RATE_LIMIT_WINDOW_MS) || 5 * 60_000,
+    max: Number(env.CHECKOUT_RATE_LIMIT_MAX) || 30,
+    code: "checkout_rate_limited",
+    message: "Too many checkout attempts. Please wait before trying again.",
+  });
 
   return async function handler(request) {
     try {
@@ -529,6 +590,7 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         const ip = clientIp(request);
         generalLimiter.check(ip);
         if (/^\/(?:auth\/(?:login|signup|otp)|compliance\/otp)/.test(path)) sensitiveLimiter.check(ip);
+        if (method === "POST" && /^\/(?:checkout|payments\/razorpay)/.test(path)) checkoutLimiter.check(ip);
       }
       if (!["GET", "HEAD"].includes(method)) assertSameOrigin(request);
       const { repository, uploads } = await getDependencies();
@@ -547,7 +609,7 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         const material = url.searchParams.get("metal") || url.searchParams.get("material");
         const category = url.searchParams.get("category");
         const products = await repository.listProducts({
-          material: material ? enumValue(material, MATERIALS) : null,
+          material: material ? optionalText(material, "Material", 80) : null,
           category: category ? enumValue(category, CATEGORIES) : null,
           featured: ["1", "true"].includes(url.searchParams.get("featured")),
           search: String(url.searchParams.get("q") || "").trim().slice(0, 120),
@@ -708,6 +770,7 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
           await repository.createComplianceReview({
             orderId: order.id, userId: user.id, documentType: checkout.compliance.documentType,
             panNumber: checkout.compliance.panNumber, form60Declaration: checkout.compliance.form60Declaration,
+            documentUrl: checkout.compliance.documentUrl,
             phone: checkout.shippingAddress.phone, combinedTotalPaise: ruled.combinedTotalPaise,
           });
         }
@@ -802,6 +865,34 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         return ok({ appointment }, 201);
       }
 
+      if (path === "/compliance/document" && method === "POST") {
+        const { user } = await authenticatedUser(request, repository, env);
+        if (user.role !== "customer") throw new ApiError(403, "customer_required", "Use a customer account to upload compliance evidence");
+        const contentType = request.headers.get("content-type") || "";
+        if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+          throw new ApiError(415, "unsupported_media_type", "Upload must use multipart/form-data");
+        }
+        const declared = Number(request.headers.get("content-length") || 0);
+        if (declared > MAX_UPLOAD_BYTES + 128 * 1024) {
+          throw new ApiError(413, "payload_too_large", "PAN image must be smaller than 3.5 MB");
+        }
+        const form = await request.formData();
+        const file = form.get("document");
+        if (!file || typeof file.arrayBuffer !== "function" || !IMAGE_EXTENSIONS[file.type] || file.size < 1 || file.size > MAX_UPLOAD_BYTES) {
+          throw new ApiError(422, "validation_error", "Upload a JPG, PNG or WebP PAN image smaller than 3.5 MB");
+        }
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (!validateImageSignature(bytes, file.type)) throw new ApiError(422, "invalid_image", "The uploaded PAN image is invalid");
+        const key = `${randomUUID()}.${IMAGE_EXTENSIONS[file.type]}`;
+        await uploads.put(key, file, { contentType: file.type, fileName: "compliance-evidence", size: file.size });
+        await repository.audit({
+          actorUserId: user.id, actorRole: user.role, action: "compliance.document_uploaded",
+          entityType: "upload", entityId: key, metadata: { contentType: file.type, size: file.size },
+          ipAddress: clientIp(request),
+        });
+        return ok({ documentUrl: `/api/uploads/${key}` }, 201);
+      }
+
       if (path === "/orders" && method === "GET") {
         const { user } = await authenticatedUser(request, repository, env);
         return ok({ orders: await repository.listOrdersForUser(user.id) });
@@ -815,7 +906,7 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         return ok({ order });
       }
 
-      const uploadRead = path.match(/^\/uploads\/([a-f0-9-]{36}\.(?:jpg|png|webp))$/i);
+      const uploadRead = path.match(/^\/uploads\/([a-f0-9-]{36}\.(?:jpg|png|webp|pdf))$/i);
       if (uploadRead && method === "GET") {
         const entry = await uploads.get(uploadRead[1]);
         if (!entry) throw new ApiError(404, "not_found", "Image not found");
@@ -823,6 +914,7 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
           status: 200,
           headers: {
             "Content-Type": entry.metadata?.contentType || "application/octet-stream",
+            ...(entry.metadata?.contentType === "application/pdf" ? { "Content-Disposition": `inline; filename="${String(entry.metadata.fileName || "offer-terms.pdf").replace(/["\r\n]/g, "")}"` } : {}),
             "Cache-Control": "public, max-age=31536000, immutable",
             ...(entry.etag ? { ETag: entry.etag } : {}),
             "X-Content-Type-Options": "nosniff",
@@ -892,6 +984,25 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         if (path === "/admin/appointments" && method === "GET") {
           return ok({ appointments: await repository.listAppointmentsAdmin() });
         }
+        const appointmentUpdate = path.match(/^\/admin\/appointments\/([^/]+)$/);
+        if (appointmentUpdate && method === "PUT") {
+          const body = await readJson(request);
+          const status = body.status === undefined ? null : enumValue(body.status, APPOINTMENT_STATUSES);
+          if (body.status !== undefined && !status) throw new ApiError(422, "validation_error", "Select a valid appointment status");
+          let scheduledAt = null;
+          if (body.scheduledAt) {
+            const date = new Date(body.scheduledAt);
+            if (!Number.isFinite(date.valueOf()) || date.valueOf() < Date.now() + 15 * 60_000 || date.valueOf() > Date.now() + 365 * 24 * 60 * 60_000) {
+              throw new ApiError(422, "validation_error", "Choose a valid future appointment within one year");
+            }
+            scheduledAt = date.toISOString();
+          }
+          if (!status && !scheduledAt) throw new ApiError(422, "validation_error", "Choose a new status or appointment time");
+          const appointment = await repository.updateAppointmentAdmin(decodeURIComponent(appointmentUpdate[1]), { status, scheduledAt });
+          if (!appointment) throw new ApiError(404, "not_found", "Appointment not found");
+          await audit("appointment.updated", "appointment", appointment.id, { status, scheduledAt });
+          return ok({ appointment });
+        }
         const appointmentStatus = path.match(/^\/admin\/appointments\/([^/]+)\/status$/);
         if (appointmentStatus && method === "PUT") {
           const body = await readJson(request);
@@ -955,20 +1066,25 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
             throw new ApiError(415, "unsupported_media_type", "Upload must use multipart/form-data");
           }
           const declared = Number(request.headers.get("content-length") || 0);
-          if (declared > MAX_UPLOAD_BYTES + 128 * 1024) throw new ApiError(413, "payload_too_large", "Image must be smaller than 3.5 MB");
+          if (declared > MAX_CAMPAIGN_ASSET_BYTES + 128 * 1024) throw new ApiError(413, "payload_too_large", "Asset must be smaller than 8 MB");
           const form = await request.formData();
-          const file = form.get("image");
-          if (!file || typeof file.arrayBuffer !== "function") throw new ApiError(422, "validation_error", "Choose an image to upload");
-          if (!IMAGE_EXTENSIONS[file.type] || file.size < 1 || file.size > MAX_UPLOAD_BYTES) {
-            throw new ApiError(422, "validation_error", "Upload a JPG, PNG or WebP image smaller than 3.5 MB");
+          const file = form.get("asset") || form.get("image");
+          if (!file || typeof file.arrayBuffer !== "function") throw new ApiError(422, "validation_error", "Choose an image or PDF to upload");
+          const extension = CAMPAIGN_ASSET_EXTENSIONS[file.type];
+          const sizeLimit = file.type === "application/pdf" ? MAX_CAMPAIGN_ASSET_BYTES : MAX_UPLOAD_BYTES;
+          if (!extension || file.size < 1 || file.size > sizeLimit) {
+            throw new ApiError(422, "validation_error", "Upload a JPG, PNG or WebP image below 3.5 MB, or a PDF below 8 MB");
           }
           const bytes = new Uint8Array(await file.arrayBuffer());
-          if (!validateImageSignature(bytes, file.type)) throw new ApiError(422, "invalid_image", "The uploaded file is not a valid image");
-          const key = `${randomUUID()}.${IMAGE_EXTENSIONS[file.type]}`;
-          await uploads.put(key, file, { contentType: file.type, fileName: String(file.name || "image").slice(0, 200), size: file.size });
-          const imageUrl = `/api/uploads/${key}`;
-          await audit("image.uploaded", "upload", key, { contentType: file.type, size: file.size });
-          return ok({ url: imageUrl, imageUrl }, 201);
+          const validPdf = file.type === "application/pdf" && bytes.length >= 5 && String.fromCharCode(...bytes.slice(0, 5)) === "%PDF-";
+          if (file.type === "application/pdf" ? !validPdf : !validateImageSignature(bytes, file.type)) {
+            throw new ApiError(422, "invalid_asset", "The uploaded file signature is invalid");
+          }
+          const key = `${randomUUID()}.${extension}`;
+          await uploads.put(key, file, { contentType: file.type, fileName: String(file.name || `campaign.${extension}`).slice(0, 200), size: file.size });
+          const assetUrl = `/api/uploads/${key}`;
+          await audit("asset.uploaded", "upload", key, { contentType: file.type, size: file.size });
+          return ok({ url: assetUrl, imageUrl: file.type.startsWith("image/") ? assetUrl : undefined, attachmentUrl: file.type === "application/pdf" ? assetUrl : undefined }, 201);
         }
       }
 

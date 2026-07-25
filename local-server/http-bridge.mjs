@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 
-const DEFAULT_BODY_LIMIT = 4 * 1024 * 1024;
+const DEFAULT_BODY_LIMIT = 9 * 1024 * 1024;
 
 export class HttpBridgeError extends Error {
   constructor(status, message) {

@@ -14,7 +14,7 @@ const navItems = [
   ["nav.silver", "Silver", "/shop?metal=Silver"],
   ["nav.platinum", "Platinum", "/shop?metal=Platinum"],
   ["nav.jyotishi", "Jyotishi", "/jyotishi"],
-  ["nav.appointments", "Appointments", "/appointments"],
+  ["nav.appointments", "Appointments", "/book-appointment"],
   ["nav.rates", "Live rates", "/live-rates"],
   ["nav.visit", "Visit us", "/visit"],
 ];
@@ -168,10 +168,10 @@ export default function Layout({ children }) {
 
       <footer className="site-footer">
         <div className="footer-top container-wide">
-          <div className="footer-brand"><Brand inverted /><p>Jewellery for the moments you keep, from the heart of Chandannagar.</p><div className="footer-rating"><strong>4.2</strong><span>★★★★★<small>89 Google reviews</small></span></div></div>
-          <div className="footer-column"><h3>Collections</h3><Link to="/shop?metal=Gold">Gold</Link><Link to="/shop?metal=Diamond">Diamond</Link><Link to="/shop?metal=Silver">Silver</Link><Link to="/shop?metal=Platinum">Platinum</Link></div>
-          <div className="footer-column"><h3>Royco</h3><Link to="/about">Our story</Link><Link to="/visit">Visit the showroom</Link><Link to="/appointments">Book an appointment</Link><Link to="/live-rates">Live rates</Link><Link to="/account">My orders</Link><Link to="/admin/login">Admin access</Link></div>
-          <div className="footer-column footer-contact"><h3>Chandannagar</h3><a href="https://maps.google.com/?cid=12735356697874811323" target="_blank" rel="noreferrer"><MapPin size={16} /> Bagbazar Plaza, Rash Behari Ave, West Bengal 712136</a><a href="tel:+913326835943"><Phone size={16} /> 033 2683 5943</a><span><ShieldCheck size={16} /> Secure ordering & insured delivery</span></div>
+          <div className="footer-brand"><Brand inverted /><p>{t("footer.tagline", "Jewellery for the moments you keep, from the heart of Chandannagar.")}</p><div className="footer-rating"><strong>4.2</strong><span>★★★★★<small>89 Google reviews</small></span></div></div>
+          <div className="footer-column"><h3>{t("footer.collections", "Collections")}</h3><Link to="/shop?metal=Gold">{t("nav.gold", "Gold")}</Link><Link to="/shop?metal=Diamond">{t("nav.diamond", "Diamond")}</Link><Link to="/shop?metal=Silver">{t("nav.silver", "Silver")}</Link><Link to="/shop?metal=Platinum">{t("nav.platinum", "Platinum")}</Link></div>
+          <div className="footer-column"><h3>Royco</h3><Link to="/about">{t("nav.story", "Our story")}</Link><Link to="/visit">{t("footer.visit", "Visit the showroom")}</Link><Link to="/book-appointment">{t("jyotishi.book", "Book an appointment")}</Link><Link to="/live-rates">{t("nav.rates", "Live rates")}</Link><Link to="/account">{t("footer.orders", "My orders")}</Link><Link to="/admin/login">{t("footer.admin", "Admin access")}</Link></div>
+          <div className="footer-column footer-contact"><h3>Chandannagar</h3><a href="https://maps.google.com/?cid=12735356697874811323" target="_blank" rel="noreferrer"><MapPin size={16} /> Bagbazar Plaza, Rash Behari Ave, West Bengal 712136</a><a href="tel:+913326835943"><Phone size={16} /> 033 2683 5943</a><span><ShieldCheck size={16} /> {t("footer.secure", "Secure ordering & insured delivery")}</span></div>
         </div>
         <div className="footer-bottom container-wide"><span>© {new Date().getFullYear()} Royco Jewellers. All rights reserved.</span><span className="bengali">বিশ্বাসে, ঐতিহ্যে, আপনাদের সঙ্গে</span><div className="footer-socials"><a href={storeSettings.social.x} target="_blank" rel="noreferrer" aria-label="X">𝕏</a><a href={storeSettings.social.facebook} target="_blank" rel="noreferrer" aria-label="Facebook"><b>f</b></a><a href={storeSettings.social.whatsapp} target="_blank" rel="noreferrer" aria-label="WhatsApp Business"><MessageCircle size={18} /></a><a href={storeSettings.social.instagram} target="_blank" rel="noreferrer" aria-label="Instagram"><Instagram size={18} /></a></div></div>
       </footer>

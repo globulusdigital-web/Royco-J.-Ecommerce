@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const LOCAL_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_UPLOADS_DIRECTORY = resolve(LOCAL_DIRECTORY, "uploads");
-const SAFE_KEY = /^[a-f0-9-]{36}\.(?:jpg|png|webp)$/i;
+const SAFE_KEY = /^[a-f0-9-]{36}\.(?:jpg|png|webp|pdf)$/i;
 
 function safePath(directory, key) {
   if (!SAFE_KEY.test(key) || basename(key) !== key) throw new Error("Unsafe local upload key");

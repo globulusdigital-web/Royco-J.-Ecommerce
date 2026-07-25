@@ -7,6 +7,7 @@ export default function LiveRatesPage() {
   const { storeSettings } = useStore();
   const { locale, t } = useLanguage();
   const rates = storeSettings.rates;
+  const materials = (storeSettings.materials || []).filter((material) => material.visible !== false);
   const updated = new Date(storeSettings.updatedAt || Date.now());
   return <div className="rates-page">
     <header className="page-hero rates-hero"><div className="container-wide"><span className="eyebrow eyebrow-light">{t("rates.eyebrow", "Published daily by Royco")}</span><h1>{t("rates.title", "Live precious metal rates.")}</h1><p>{t("rates.intro", "Transparent reference rates used by products in dynamic pricing mode.")}</p><div className="rate-timestamp"><Clock3 /> {t("rates.updated", "Last updated today at")} {updated.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" })}</div></div><RefreshCw /></header>
@@ -16,6 +17,7 @@ export default function LiveRatesPage() {
       <article className="rate-card rate-platinum"><Gem /><span>{t("rates.platinum", "Platinum")}</span><h2>{t("rates.platinum", "Today’s platinum rate")}</h2><dl><div><dt>Pt 950 reference</dt><dd>{formatMoney(rates.platinumGram)}<small>/ {t("rates.gram", "gram")}</small></dd></div></dl></article>
       <article className="rate-card rate-diamond"><Diamond /><span>{t("rates.diamond", "Diamond")}</span><h2>Reference tiers</h2><dl>{Object.entries(rates.diamond).map(([tier, value]) => <div key={tier}><dt>{tier} clarity</dt><dd>{formatMoney(value)}<small>/ {t("rates.carat", "carat")}</small></dd></div>)}</dl></article>
     </section>
+    {materials.length > 0 && <section className="custom-live-rates container-wide"><div className="section-heading"><span className="eyebrow">{t("rates.publishedMaterials", "Published materials")}</span><h2>{t("rates.allRates", "Every live rate, in one place.")}</h2></div><div className="custom-rate-list">{materials.map((material) => <article key={material.id}><span>{material.productMetal}</span><h3>{material.name}</h3><strong>{material.currency === "INR" ? formatMoney(material.rate) : `${material.currency} ${Number(material.rate).toLocaleString(locale)}`}</strong><small>/ {material.unit}</small>{material.makingCharge && <p>{material.makingCharge.type === "flat" ? formatMoney(material.makingCharge.value) : `${material.makingCharge.value}%`} making charge</p>}</article>)}</div></section>}
     <section className="rate-disclaimer container"><ShieldCheck /><div><h2>{t("rates.how", "How dynamic pricing works")}</h2><p>{t("rates.explain", "Eligible product prices combine the published material rate, verified product weight and the configured making charge. The final invoice reflects verified weight, stone grading and applicable 3% GST.")}</p></div></section>
   </div>;
 }
