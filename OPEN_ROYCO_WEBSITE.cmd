@@ -14,14 +14,12 @@ if not exist "%NODE_EXE%" if "%NODE_EXE%"=="%USERPROFILE%\.cache\codex-runtimes\
   exit /b 1
 )
 
-if not exist "dist\index.html" (
-  echo Building Royco Jewellers...
-  "%NODE_EXE%" "node_modules\vite\bin\vite.js" build
-  if errorlevel 1 (
-    echo The website build failed. Run npm install and try again.
-    pause
-    exit /b 1
-  )
+echo Building the latest Royco Jewellers website...
+"%NODE_EXE%" "node_modules\vite\bin\vite.js" build
+if errorlevel 1 (
+  echo The website build failed. Run pnpm install and try again.
+  pause
+  exit /b 1
 )
 
 powershell -NoProfile -Command "try { $r=Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:4173/api/health' -TimeoutSec 2; if ($r.StatusCode -eq 200) { exit 0 } } catch {}; exit 1" >nul 2>nul
