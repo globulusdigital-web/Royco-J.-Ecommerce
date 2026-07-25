@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { normalizeProduct } from "../lib/format";
+import { dynamicProductPrice, fallbackStoreSettings } from "../lib/pricing";
 import { fallbackProducts, fallbackPromotions } from "../data/fallbackProducts";
 
 const StoreContext = createContext(null);
@@ -20,6 +21,7 @@ export function StoreProvider({ children }) {
   const [promotions, setPromotions] = useState(fallbackPromotions);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [usingPreviewData, setUsingPreviewData] = useState(false);
+  const [storeSettings, setStoreSettings] = useState(fallbackStoreSettings);
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [cart, setCart] = useState(readCart);
@@ -33,20 +35,27 @@ export function StoreProvider({ children }) {
   const loadCatalog = useCallback(async () => {
     setCatalogLoading(true);
     try {
-      const [productPayload, promotionPayload] = await Promise.all([
+      const [productPayload, promotionPayload, settingsPayload] = await Promise.all([
         api("/api/products"),
         api("/api/promotions"),
+        api("/api/store-settings"),
       ]);
       const nextProducts = productPayload?.products ?? productPayload;
       const nextPromotions = promotionPayload?.promotions ?? promotionPayload;
       if (Array.isArray(nextProducts) && nextProducts.length) {
-        setProducts(nextProducts.map(normalizeProduct));
+        const nextSettings = settingsPayload?.settings || settingsPayload || fallbackStoreSettings;
+        setStoreSettings(nextSettings);
+        setProducts(nextProducts.map(normalizeProduct).map((product) => ({
+          ...product,
+          price: dynamicProductPrice(product, nextSettings),
+        })));
         setUsingPreviewData(false);
       }
       if (Array.isArray(nextPromotions)) setPromotions(nextPromotions);
     } catch {
       setProducts(fallbackProducts);
       setPromotions(fallbackPromotions);
+      setStoreSettings(fallbackStoreSettings);
       setUsingPreviewData(true);
     } finally {
       setCatalogLoading(false);
@@ -159,6 +168,7 @@ export function StoreProvider({ children }) {
 
   const value = useMemo(() => ({
     products,
+    storeSettings,
     promotions,
     catalogLoading,
     usingPreviewData,
@@ -183,7 +193,7 @@ export function StoreProvider({ children }) {
     toast,
     setToast,
     notify,
-  }), [products, promotions, catalogLoading, usingPreviewData, loadCatalog, user, authLoading, refreshAuth, login, signup, requestOtp, verifyOtp, logout, cart, cartCount, cartSubtotal, cartOpen, addToCart, updateCart, removeFromCart, clearCart, toast, notify]);
+  }), [products, storeSettings, promotions, catalogLoading, usingPreviewData, loadCatalog, user, authLoading, refreshAuth, login, signup, requestOtp, verifyOtp, logout, cart, cartCount, cartSubtotal, cartOpen, addToCart, updateCart, removeFromCart, clearCart, toast, notify]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

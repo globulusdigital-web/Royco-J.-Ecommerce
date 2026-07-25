@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { ArrowRight, Camera as Instagram, ChevronRight, Languages, MapPin, Menu, Phone, Search, ShieldCheck, ShoppingBag as Bag, User, X } from "lucide-react";
+import { ArrowRight, Camera as Instagram, ChevronRight, Languages, MapPin, Menu, MessageCircle, Phone, Search, ShieldCheck, ShoppingBag as Bag, User, X } from "lucide-react";
 import BackToTop from "./BackToTop";
 import SeasonalPetals from "./SeasonalPetals";
 import { useLanguage } from "../context/LanguageContext";
@@ -14,6 +14,8 @@ const navItems = [
   ["nav.silver", "Silver", "/shop?metal=Silver"],
   ["nav.platinum", "Platinum", "/shop?metal=Platinum"],
   ["nav.jyotishi", "Jyotishi", "/jyotishi"],
+  ["nav.appointments", "Appointments", "/appointments"],
+  ["nav.rates", "Live rates", "/live-rates"],
   ["nav.visit", "Visit us", "/visit"],
 ];
 
@@ -84,7 +86,7 @@ function CartDrawer() {
 }
 
 export default function Layout({ children }) {
-  const { cartCount, setCartOpen, user, toast, setToast } = useStore();
+  const { cartCount, setCartOpen, user, toast, setToast, storeSettings } = useStore();
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -109,9 +111,9 @@ export default function Layout({ children }) {
   return (
     <div className="site-shell">
       <SeasonalPetals />
-      <div className="announcement">
-        <span>{t("header.delivery", "Complimentary insured delivery on orders above ₹50,000")}</span>
-        <Link to="/visit">{t("header.visit", "Visit Chandannagar")} <ChevronRight size={14} /></Link>
+      <div className="announcement live-rate-banner">
+        <Link to="/live-rates"><strong>LIVE</strong> 22K Gold ₹{Number(storeSettings.rates.gold22k).toLocaleString("en-IN")}/g · Silver ₹{Number(storeSettings.rates.silverGram).toLocaleString("en-IN")}/g <ChevronRight size={14} /></Link>
+        <span>{t("header.delivery", "Complimentary insured delivery above ₹50,000")}</span>
       </div>
       <header className="site-header">
         <div className="header-primary container-wide">
@@ -121,6 +123,7 @@ export default function Layout({ children }) {
             {navItems.map(([key, label, href]) => <NavLink key={key} to={href}>{t(key, label)}</NavLink>)}
           </nav>
           <div className="header-actions">
+            <div className="header-socials"><a href={storeSettings.social.facebook} target="_blank" rel="noreferrer" aria-label="Facebook"><b>f</b></a><a href={storeSettings.social.whatsapp} target="_blank" rel="noreferrer" aria-label="WhatsApp Business"><MessageCircle /></a><a href={storeSettings.social.instagram} target="_blank" rel="noreferrer" aria-label="Instagram"><Instagram /></a><a href={storeSettings.social.x} target="_blank" rel="noreferrer" aria-label="X">𝕏</a></div>
             <button className="language-toggle" type="button" onClick={toggleLanguage} aria-label={language === "en" ? "বাংলায় দেখুন" : "View in English"}><Languages /><span>{language === "en" ? "বাংলা" : t("header.translate", "English")}</span></button>
             <button className="icon-button" type="button" aria-label="Search" onClick={() => setSearchOpen((value) => !value)}><Search size={20} /></button>
             <Link className="icon-button" aria-label={user ? "Your account" : "Sign in"} to={user ? (user.role === "admin" ? "/admin" : "/account") : "/login"}><User size={20} /></Link>
@@ -143,7 +146,7 @@ export default function Layout({ children }) {
             <button className="mobile-language-toggle" type="button" onClick={toggleLanguage}><Languages /> {language === "en" ? "বাংলায় দেখুন" : "View in English"}</button>
             <nav>
               {navItems.map(([key, label, href], index) => <Link key={key} to={href}><span>0{index + 1}</span>{t(key, label)}<ArrowRight /></Link>)}
-              <Link to="/about"><span>08</span>{t("nav.story", "Our story")}<ArrowRight /></Link>
+              <Link to="/about"><span>10</span>{t("nav.story", "Our story")}<ArrowRight /></Link>
             </nav>
             <div className="mobile-menu-contact"><a href="tel:+913326835943"><Phone size={17} /> 033 2683 5943</a><p>Open daily · 10:30 am – 9:00 pm</p></div>
           </aside>
@@ -156,10 +159,10 @@ export default function Layout({ children }) {
         <div className="footer-top container-wide">
           <div className="footer-brand"><Brand inverted /><p>Jewellery for the moments you keep, from the heart of Chandannagar.</p><div className="footer-rating"><strong>4.2</strong><span>★★★★★<small>89 Google reviews</small></span></div></div>
           <div className="footer-column"><h3>Collections</h3><Link to="/shop?metal=Gold">Gold</Link><Link to="/shop?metal=Diamond">Diamond</Link><Link to="/shop?metal=Silver">Silver</Link><Link to="/shop?metal=Platinum">Platinum</Link></div>
-          <div className="footer-column"><h3>Royco</h3><Link to="/about">Our story</Link><Link to="/visit">Visit the showroom</Link><Link to="/jyotishi">Jyotishi appointments</Link><Link to="/account">My orders</Link><Link to="/admin/login">Admin access</Link></div>
+          <div className="footer-column"><h3>Royco</h3><Link to="/about">Our story</Link><Link to="/visit">Visit the showroom</Link><Link to="/appointments">Book an appointment</Link><Link to="/live-rates">Live rates</Link><Link to="/account">My orders</Link><Link to="/admin/login">Admin access</Link></div>
           <div className="footer-column footer-contact"><h3>Chandannagar</h3><a href="https://maps.google.com/?cid=12735356697874811323" target="_blank" rel="noreferrer"><MapPin size={16} /> Bagbazar Plaza, Rash Behari Ave, West Bengal 712136</a><a href="tel:+913326835943"><Phone size={16} /> 033 2683 5943</a><span><ShieldCheck size={16} /> Secure ordering & insured delivery</span></div>
         </div>
-        <div className="footer-bottom container-wide"><span>© {new Date().getFullYear()} Royco Jewellers. All rights reserved.</span><span className="bengali">বিশ্বাসে, ঐতিহ্যে, আপনাদের সঙ্গে</span><a href="https://www.instagram.com/" target="_blank" rel="noreferrer" aria-label="Instagram"><Instagram size={18} /></a></div>
+        <div className="footer-bottom container-wide"><span>© {new Date().getFullYear()} Royco Jewellers. All rights reserved.</span><span className="bengali">বিশ্বাসে, ঐতিহ্যে, আপনাদের সঙ্গে</span><div className="footer-socials"><a href={storeSettings.social.x} target="_blank" rel="noreferrer" aria-label="X">𝕏</a><a href={storeSettings.social.facebook} target="_blank" rel="noreferrer" aria-label="Facebook"><b>f</b></a><a href={storeSettings.social.whatsapp} target="_blank" rel="noreferrer" aria-label="WhatsApp Business"><MessageCircle size={18} /></a><a href={storeSettings.social.instagram} target="_blank" rel="noreferrer" aria-label="Instagram"><Instagram size={18} /></a></div></div>
       </footer>
       <CartDrawer />
       <BackToTop />

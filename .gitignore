@@ -7,4 +7,5 @@ local-server/uploads/
 !.env.example
 .pnpm-store/
 .royco-preview.*.log
+.codex/
 

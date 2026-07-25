@@ -21,7 +21,12 @@ A production-structured, JavaScript-only jewellery storefront for Royco Jeweller
 - Password-free customer sign-in with mobile number and SMS OTP through Twilio Verify
 - Bilingual English/Bengali controls for the new account and Jyotishi booking flows
 - Jyotishi appointment scheduling with live slot availability and an administrator diary
+- Jyotishi Jewels catalogue with gemstone, Rashi, planet and metal-setting filters
+- Astrologer and Royco specialist booking with in-person or virtual consultation modes
+- Daily Gold, Silver, Platinum and Diamond rate publishing with product-level dynamic pricing
 - Delivery/billing information and offer codes
+- Automatic 3% GST presentation and server-side high-value purchase controls at ₹2,00,000
+- PAN/Form 60 collection, phone OTP proof, banking-only checkout and administrator verification queue
 - Checkout with Razorpay, showroom payment, confirmed cash-on-delivery or verified UPI/bank-transfer preference
 - Order history and pending-order cancellation
 
@@ -34,6 +39,8 @@ A production-structured, JavaScript-only jewellery storefront for Royco Jeweller
 - Order queue and fulfilment-status management
 - Revenue, order, customer, stock and best-seller dashboard
 - Upcoming Jyotishi count plus appointment confirmation, completion and cancellation controls
+- Daily market rates, global/product making charges and social account management
+- High-value compliance review with approve/reject order gating
 - Database record summary and administrator audit trail
 - Downloadable sales CSV
 
@@ -83,6 +90,7 @@ The requested administrator credentials work as the initial bootstrap values. Be
 5. Add `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` from the Razorpay dashboard. Use test keys first, then replace them with live keys after KYC and webhook/payment testing.
 6. Confirm product prices, weights, purity, stock and policies with Royco.
 7. Replace the included licensed demonstration catalogue photography with Royco-owned originals.
+8. Have Indian tax counsel and a chartered accountant validate the Section 139A, GST, Form 60, record-retention and anti-splitting workflows before production use. The included controls implement the requested policy but are not a substitute for legal advice.
 
 No password is stored in plain text: the backend creates a salted scrypt hash on first successful bootstrap login. All protected operations are checked again on the server.
 

@@ -15,6 +15,7 @@ import {
 import { ApiError, assertSameOrigin, clientIp, fail, ok, readJson } from "./http.mjs";
 import { checkOtp, maskPhone, normalizePhone, OTP_EXPIRES_IN_SECONDS, sendOtp } from "./otp.mjs";
 import { createRazorpayOrder, verifyRazorpaySignature } from "./payments.mjs";
+import { GST_RATE_PERCENT, HIGH_VALUE_THRESHOLD_PAISE, isHighValue, validPan } from "./commerce-rules.mjs";
 import { getProductionRepository } from "./repository.mjs";
 import { getProductionBlobStorage } from "./storage.mjs";
 import {
@@ -31,7 +32,7 @@ import {
   validateImageSignature,
 } from "./validation.mjs";
 
-const ORDER_STATUSES = Object.freeze(["pending", "confirmed", "processing", "shipped", "delivered", "cancelled"]);
+const ORDER_STATUSES = Object.freeze(["pending", "pending_verification", "confirmed", "processing", "shipped", "delivered", "cancelled"]);
 const PAYMENT_METHODS = Object.freeze({
   pay_in_store: "store",
   store: "store",
@@ -41,7 +42,7 @@ const PAYMENT_METHODS = Object.freeze({
   razorpay: "razorpay",
 });
 const APPOINTMENT_STATUSES = Object.freeze(["requested", "confirmed", "completed", "cancelled"]);
-const APPOINTMENT_SERVICES = Object.freeze(["birth_chart", "gemstone_guidance", "muhurat"]);
+const APPOINTMENT_SERVICES = Object.freeze(["birth_chart", "gemstone_guidance", "muhurat", "custom_design", "high_value_purchase", "product_consultation"]);
 const APPOINTMENT_LANGUAGES = Object.freeze(["Bengali", "English", "Hindi"]);
 const APPOINTMENT_TIMES = Object.freeze(["10:30", "11:30", "12:30", "15:30", "16:30", "17:30"]);
 const IMAGE_EXTENSIONS = Object.freeze({ "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" });
@@ -145,6 +146,12 @@ function validateProduct(body) {
     purity: requiredText(body.purity, "Purity", 1, 80),
     description: requiredText(body.description, "Description", 2, 4000),
     weightG: Math.round(weightG * 1000) / 1000,
+    pricingMode: body.pricingMode === "dynamic" ? "dynamic" : "manual",
+    makingChargeType: body.makingChargeType === "flat" ? "flat" : body.makingChargeType === "percent" ? "percent" : "",
+    makingChargeValue: Math.max(0, Number(body.makingChargeValue || 0)),
+    caratWeight: Math.max(0, Number(body.caratWeight || 0)),
+    diamondTier: ["IF", "VVS", "VS", "SI"].includes(String(body.diamondTier || "").toUpperCase())
+      ? String(body.diamondTier).toUpperCase() : "",
     pricePaise: price.value,
     compareAtPricePaise,
     stock: stock.value,
@@ -217,6 +224,13 @@ function validateCheckout(body) {
   return {
     items: [...consolidated].map(([productId, quantity]) => ({ productId, quantity })),
     couponCode,
+    gstRate: GST_RATE_PERCENT,
+    compliance: body.compliance && typeof body.compliance === "object" ? {
+      documentType: body.compliance.documentType === "form60" ? "form60" : "pan",
+      panNumber: String(body.compliance.panNumber || "").trim().toUpperCase(),
+      form60Declaration: String(body.compliance.form60Declaration || "").trim().slice(0, 1200),
+      otpToken: String(body.compliance.otpToken || ""),
+    } : null,
     paymentMethod,
     shippingAddress: {
       name: requiredText(address.name, "Full name", 2, 160),
@@ -275,6 +289,10 @@ function validateAppointment(body) {
     language,
     scheduledAt: scheduledAt.toISOString(),
     notes: body.notes ? requiredText(body.notes, "Notes", 0, 600) : "",
+    providerType: body.providerType === "royco_specialist" ? "royco_specialist" : "astrologer",
+    specialist: optionalText(body.specialist || "First available", "Specialist", 120),
+    consultationMode: body.consultationMode === "virtual" ? "virtual" : "in_person",
+    customerEmail: body.customerEmail ? cleanEmail(body.customerEmail) : "",
   };
 }
 
@@ -296,6 +314,51 @@ async function appointmentAvailability(repository, dateValue) {
           && !reserved.has(scheduledAt),
       };
     }),
+  };
+}
+
+function complianceOtpToken(phone, env) {
+  const now = Math.floor(Date.now() / 1000);
+  return signSession({
+    v: 1, sub: normalizePhone(phone), role: "checkout_compliance",
+    iat: now, exp: now + 10 * 60,
+  }, requiredSessionSecret(env));
+}
+
+function validComplianceOtp(token, phone, env) {
+  const proof = verifySession(token, requiredSessionSecret(env));
+  return proof?.role === "checkout_compliance" && proof.sub === normalizePhone(phone);
+}
+
+async function applyCheckoutRules(repository, user, checkout, env) {
+  const quote = typeof repository.quoteCheckout === "function"
+    ? await repository.quoteCheckout(checkout)
+    : { totalPaise: 0 };
+  const recentTotalPaise = typeof repository.recentCustomerOrderTotal === "function"
+    ? await repository.recentCustomerOrderTotal(user.id, new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+    : 0;
+  const combinedTotalPaise = Number(quote.totalPaise || 0) + Number(recentTotalPaise || 0);
+  const highValue = isHighValue(quote.totalPaise) || isHighValue(combinedTotalPaise);
+  if (!highValue) return { checkout, quote, highValue, combinedTotalPaise };
+
+  if (checkout.paymentMethod !== "bank_transfer") {
+    throw new ApiError(422, "digital_payment_required", "Orders at or above ₹2 lakh require UPI or bank transfer after administrator verification.");
+  }
+  const compliance = checkout.compliance;
+  const documentValid = compliance?.documentType === "pan"
+    ? validPan(compliance.panNumber)
+    : compliance?.documentType === "form60" && compliance.form60Declaration.length >= 20;
+  if (!documentValid) {
+    throw new ApiError(422, "compliance_document_required", "Enter a valid PAN or complete the Form 60 declaration.");
+  }
+  if (!validComplianceOtp(compliance.otpToken, checkout.shippingAddress.phone, env)) {
+    throw new ApiError(422, "compliance_otp_required", "Verify the checkout phone number before submitting this high-value order.");
+  }
+  return {
+    quote,
+    highValue,
+    combinedTotalPaise,
+    checkout: { ...checkout, orderStatus: "pending_verification" },
   };
 }
 
@@ -403,6 +466,13 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         return ok({ promotions: await repository.listPromotions(false) });
       }
 
+      if (path === "/store-settings" && method === "GET") {
+        const settings = typeof repository.getStoreSettings === "function"
+          ? await repository.getStoreSettings()
+          : null;
+        return ok({ settings });
+      }
+
       if (path === "/appointments/availability" && method === "GET") {
         return ok(await appointmentAvailability(repository, url.searchParams.get("date")));
       }
@@ -445,6 +515,24 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         return ok({ user: repository.serializeUser(user), isNewUser: !user.email }, 200, {
           "Set-Cookie": sessionCookie(token, SESSION_TTL_SECONDS, { secure: isSecureRequest(request) }),
         });
+      }
+
+      if (path === "/compliance/otp/request" && method === "POST") {
+        const body = await readJson(request);
+        const result = await sendOtp(body.phone, env);
+        return ok({
+          sent: true, phone: result.phone, maskedPhone: maskPhone(result.phone),
+          expiresIn: OTP_EXPIRES_IN_SECONDS, ...(result.devOtp ? { devOtp: result.devOtp } : {}),
+        });
+      }
+
+      if (path === "/compliance/otp/verify" && method === "POST") {
+        const body = await readJson(request);
+        const phone = normalizePhone(body.phone);
+        if (!(await checkOtp(phone, body.code, env))) {
+          throw new ApiError(401, "invalid_otp", "That verification code is invalid or has expired");
+        }
+        return ok({ verified: true, token: complianceOtpToken(phone, env), expiresIn: 600 });
       }
 
       if (path === "/auth/signup" && method === "POST") {
@@ -514,7 +602,15 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         if (checkout.paymentMethod === "razorpay") {
           throw new ApiError(422, "payment_verification_required", "Complete Razorpay verification before placing this order");
         }
-        const order = await repository.checkout({ user, ...checkout });
+        const ruled = await applyCheckoutRules(repository, user, checkout, env);
+        const order = await repository.checkout({ user, ...ruled.checkout });
+        if (ruled.highValue && typeof repository.createComplianceReview === "function") {
+          await repository.createComplianceReview({
+            orderId: order.id, userId: user.id, documentType: checkout.compliance.documentType,
+            panNumber: checkout.compliance.panNumber, form60Declaration: checkout.compliance.form60Declaration,
+            phone: checkout.shippingAddress.phone, combinedTotalPaise: ruled.combinedTotalPaise,
+          });
+        }
         return ok({ order }, 201);
       }
 
@@ -522,7 +618,8 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
         const { user } = await authenticatedUser(request, repository, env);
         if (user.role !== "customer") throw new ApiError(403, "customer_required", "Use a customer account to place an order");
         const checkout = validateCheckout({ ...(await readJson(request)), paymentMethod: "razorpay" });
-        const quote = await repository.quoteCheckout(checkout);
+        const ruled = await applyCheckoutRules(repository, user, checkout, env);
+        const quote = ruled.quote;
         const intentId = randomUUID();
         const provider = await createRazorpayOrder({
           amountPaise: quote.totalPaise,
@@ -707,6 +804,35 @@ export function createApiHandler({ getDependencies = defaultDependencies, env = 
           if (!appointment) throw new ApiError(404, "not_found", "Appointment not found");
           await audit("appointment.status_updated", "appointment", appointment.id, { status });
           return ok({ appointment });
+        }
+
+        if (path === "/admin/store-settings" && method === "GET") {
+          return ok({ settings: await repository.getStoreSettings() });
+        }
+        if (path === "/admin/store-settings" && method === "PUT") {
+          const body = await readJson(request);
+          const settings = await repository.updateStoreSettings(body);
+          await audit("store_settings.published", "store_settings", "primary", { updatedAt: settings.updatedAt });
+          return ok({ settings });
+        }
+
+        if (path === "/admin/compliance" && method === "GET") {
+          return ok({ reviews: await repository.listComplianceReviews() });
+        }
+        const complianceReview = path.match(/^\/admin\/compliance\/([^/]+)$/);
+        if (complianceReview && method === "PUT") {
+          const body = await readJson(request);
+          const status = enumValue(body.status, ["pending", "approved", "rejected"]);
+          if (!status) throw new ApiError(422, "validation_error", "Select a valid review status");
+          const review = await repository.updateComplianceReview(
+            decodeURIComponent(complianceReview[1]), status, optionalText(body.adminNotes, "Admin notes", 1000),
+          );
+          if (!review) throw new ApiError(404, "not_found", "Compliance review not found");
+          if (review.order_id) {
+            await repository.updateOrderStatus(review.order_id, status === "approved" ? "confirmed" : status === "rejected" ? "cancelled" : "pending_verification");
+          }
+          await audit("compliance.reviewed", "compliance_review", review.id, { status });
+          return ok({ review });
         }
 
         if (path === "/admin/database-summary" && method === "GET") return ok(await repository.databaseSummary());

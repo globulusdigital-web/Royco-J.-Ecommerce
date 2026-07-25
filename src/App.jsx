@@ -13,6 +13,8 @@ import ProductPage from "./pages/ProductPage";
 import ShopPage from "./pages/ShopPage";
 import VisitPage from "./pages/VisitPage";
 import JyotishiPage from "./pages/JyotishiPage";
+import AppointmentPage from "./pages/AppointmentPage";
+import LiveRatesPage from "./pages/LiveRatesPage";
 
 function NotFoundPage() {
   return <div className="not-found container"><span className="eyebrow">404 · Lost sparkle</span><h1>We couldn’t find<br /><em>that page.</em></h1><p>The collection is still right where you left it.</p><Link className="button button-dark" to="/"><ArrowLeft /> Return home</Link></div>;
@@ -30,6 +32,8 @@ export default function App() {
             <Route path="/about" element={<AboutPage />} />
             <Route path="/visit" element={<VisitPage />} />
             <Route path="/jyotishi" element={<JyotishiPage />} />
+            <Route path="/appointments" element={<AppointmentPage />} />
+            <Route path="/live-rates" element={<LiveRatesPage />} />
             <Route path="/login" element={<AuthPage />} />
             <Route path="/checkout" element={<CheckoutPage />} />
             <Route path="/account" element={<AccountPage />} />

@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fallbackProducts, fallbackPromotions } from "../src/data/fallbackProducts.js";
 import { ApiError } from "../backend/lib/http.mjs";
+import { cloneStoreSettings, DEFAULT_STORE_SETTINGS, mergeStoreSettings } from "../backend/lib/commerce-rules.mjs";
 import {
   rupees,
   serializeAppointment,
@@ -47,6 +48,11 @@ function seedProduct(product, index, createdAt) {
     category: product.category,
     purity: product.purity || "",
     weight_grams: Number(product.weightG || 0),
+    pricing_mode: product.pricingMode || "manual",
+    making_charge_type: product.makingChargeType || "",
+    making_charge_value: Number(product.makingChargeValue || 0),
+    carat_weight: Number(product.caratWeight || 0),
+    diamond_tier: product.diamondTier || "",
     price_paise: Math.round(Number(product.price || 0) * 100),
     compare_at_price_paise: product.compareAtPrice
       ? Math.round(Number(product.compareAtPrice) * 100)
@@ -87,7 +93,7 @@ function seedPromotion(promotion, index, createdAt) {
 export function createSeedStore(now = new Date()) {
   const createdAt = nowIso(now);
   return {
-    schema_version: 2,
+    schema_version: 3,
     next_product_id: fallbackProducts.length + 1,
     next_order_item_id: 1,
     next_audit_id: 1,
@@ -99,6 +105,8 @@ export function createSeedStore(now = new Date()) {
     order_items: [],
     appointments: [],
     payment_intents: [],
+    compliance_reviews: [],
+    store_settings: cloneStoreSettings(DEFAULT_STORE_SETTINGS),
     audit_logs: [],
     created_at: createdAt,
     updated_at: createdAt,
@@ -116,12 +124,14 @@ function normalizeLoadedStore(value) {
     "order_items",
     "appointments",
     "payment_intents",
+    "compliance_reviews",
     "audit_logs",
   ];
   for (const key of lists) {
     if (!Array.isArray(value[key])) value[key] = [];
   }
   value.schema_version ||= 1;
+  value.store_settings ||= cloneStoreSettings(DEFAULT_STORE_SETTINGS);
   value.next_product_id ||= Math.max(0, ...value.products.map((row) => Number(row.id) || 0)) + 1;
   value.next_order_item_id ||= Math.max(0, ...value.order_items.map((row) => Number(row.id) || 0)) + 1;
   value.next_audit_id ||= Math.max(0, ...value.audit_logs.map((row) => Number(row.id) || 0)) + 1;
@@ -178,7 +188,7 @@ function descendingCreated(left, right) {
   return String(right.created_at || "").localeCompare(String(left.created_at || ""));
 }
 
-function calculateLocalQuote(store, items, couponCode, now = new Date()) {
+function calculateLocalQuote(store, items, couponCode, now = new Date(), gstRate = 0) {
   const products = new Map(store.products.map((product) => [Number(product.id), product]));
   if (new Set(items.map((item) => item.productId)).size !== items.length
     || items.some((item) => !products.has(item.productId))) {
@@ -211,13 +221,15 @@ function calculateLocalQuote(store, items, couponCode, now = new Date()) {
   }
 
   const shippingPaise = subtotalPaise - discountPaise >= 5_000_000 ? 0 : 49_900;
+  const gstPaise = Math.round((subtotalPaise - discountPaise) * Number(gstRate || 0) / 100);
   return {
     products,
     promotion,
     subtotalPaise,
     discountPaise,
     shippingPaise,
-    totalPaise: subtotalPaise - discountPaise + shippingPaise,
+    gstPaise,
+    totalPaise: subtotalPaise - discountPaise + shippingPaise + gstPaise,
   };
 }
 
@@ -268,6 +280,56 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
     async ping() {
       await readState();
       return true;
+    },
+
+    async getStoreSettings() {
+      const store = await readState();
+      return clone(store.store_settings || DEFAULT_STORE_SETTINGS);
+    },
+
+    async updateStoreSettings(patch) {
+      return mutate((store) => {
+        store.store_settings = mergeStoreSettings(store.store_settings, patch);
+        return clone(store.store_settings);
+      });
+    },
+
+    async recentCustomerOrderTotal(userId, sinceIso) {
+      const store = await readState();
+      return store.orders
+        .filter((order) => String(order.user_id) === String(userId))
+        .filter((order) => order.status !== "cancelled" && String(order.created_at) >= String(sinceIso))
+        .reduce((sum, order) => sum + Number(order.total_paise || 0), 0);
+    },
+
+    async createComplianceReview({ orderId, userId, documentType, panNumber, form60Declaration, phone, combinedTotalPaise }) {
+      return mutate((store) => {
+        const createdAt = nowIso();
+        const review = {
+          id: randomUUID(), order_id: orderId, user_id: userId, document_type: documentType,
+          pan_number: panNumber || null, form60_declaration: form60Declaration || null,
+          phone, combined_total_paise: combinedTotalPaise, status: "pending",
+          admin_notes: "", created_at: createdAt, updated_at: createdAt,
+        };
+        store.compliance_reviews.push(review);
+        return clone(review);
+      });
+    },
+
+    async listComplianceReviews() {
+      const store = await readState();
+      return store.compliance_reviews.slice().sort(descendingCreated).map(clone);
+    },
+
+    async updateComplianceReview(id, status, adminNotes = "") {
+      return mutate((store) => {
+        const review = store.compliance_reviews.find((entry) => String(entry.id) === String(id));
+        if (!review) return null;
+        review.status = status;
+        review.admin_notes = adminNotes;
+        review.updated_at = nowIso();
+        return clone(review);
+      });
     },
 
     async getUserByEmail(emailNormalized) {
@@ -414,7 +476,9 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
           id: store.next_product_id++, sku: product.sku, slug: product.slug,
           name: product.name, bengali_name: product.bengaliName || "",
           description: product.description, material: product.material, category: product.category,
-          purity: product.purity, weight_grams: product.weightG, price_paise: product.pricePaise,
+          purity: product.purity, weight_grams: product.weightG, pricing_mode: product.pricingMode,
+          making_charge_type: product.makingChargeType, making_charge_value: product.makingChargeValue,
+          carat_weight: product.caratWeight, diamond_tier: product.diamondTier, price_paise: product.pricePaise,
           compare_at_price_paise: product.compareAtPricePaise, stock: product.stock,
           image_url: product.imageUrl, gallery: product.gallery || [], featured: product.featured,
           active: product.active, created_at: createdAt, updated_at: createdAt,
@@ -433,7 +497,9 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
           sku: product.sku, slug: product.slug, name: product.name,
           bengali_name: product.bengaliName || "", description: product.description,
           material: product.material, category: product.category, purity: product.purity,
-          weight_grams: product.weightG, price_paise: product.pricePaise,
+          weight_grams: product.weightG, pricing_mode: product.pricingMode,
+          making_charge_type: product.makingChargeType, making_charge_value: product.makingChargeValue,
+          carat_weight: product.caratWeight, diamond_tier: product.diamondTier, price_paise: product.pricePaise,
           compare_at_price_paise: product.compareAtPricePaise, stock: product.stock,
           image_url: product.imageUrl, gallery: product.gallery || [], featured: product.featured,
           active: product.active, updated_at: nowIso(),
@@ -503,13 +569,14 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
       });
     },
 
-    async quoteCheckout({ items, couponCode, now = new Date() }) {
+    async quoteCheckout({ items, couponCode, gstRate = 0, now = new Date() }) {
       const store = await readState();
-      const quote = calculateLocalQuote(store, items, couponCode, now);
+      const quote = calculateLocalQuote(store, items, couponCode, now, gstRate);
       return {
         subtotalPaise: quote.subtotalPaise,
         discountPaise: quote.discountPaise,
         shippingPaise: quote.shippingPaise,
+        gstPaise: quote.gstPaise,
         totalPaise: quote.totalPaise,
         promoCode: quote.promotion?.code || null,
       };
@@ -571,7 +638,7 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
         .map((row) => row.scheduled_at);
     },
 
-    async createAppointment({ id, user, service, scheduledAt, language, notes }) {
+    async createAppointment({ id, user, service, scheduledAt, language, notes, providerType = "astrologer", specialist = "First available", consultationMode = "in_person", customerEmail = "" }) {
       return mutate((store) => {
         if (store.appointments.some((row) => row.status !== "cancelled"
           && new Date(row.scheduled_at).valueOf() === new Date(scheduledAt).valueOf())) {
@@ -583,6 +650,10 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
           user_id: user.id,
           customer_name: user.name,
           customer_phone: user.phone,
+          customer_email: customerEmail || user.email || "",
+          provider_type: providerType,
+          specialist,
+          consultation_mode: consultationMode,
           service,
           scheduled_at: scheduledAt,
           duration_minutes: 45,
@@ -629,20 +700,24 @@ export async function createLocalRepository({ storePath = DEFAULT_STORE_PATH } =
       couponCode,
       paymentMethod,
       shippingAddress,
+      gstRate = 0,
+      compliance = null,
+      orderStatus = "pending",
       razorpayOrderId = null,
       razorpayPaymentId = null,
       now = new Date(),
     }) {
       return mutate((store) => {
-        const quote = calculateLocalQuote(store, items, couponCode, now);
+        const quote = calculateLocalQuote(store, items, couponCode, now, gstRate);
         const {
-          products, promotion, subtotalPaise, discountPaise, shippingPaise, totalPaise,
+          products, promotion, subtotalPaise, discountPaise, shippingPaise, gstPaise, totalPaise,
         } = quote;
         const timestamp = nowIso(now);
         const order = {
-          id: randomUUID(), order_number: makeOrderNumber(now), user_id: user.id, status: "pending",
+          id: randomUUID(), order_number: makeOrderNumber(now), user_id: user.id, status: orderStatus,
           subtotal_paise: subtotalPaise, discount_paise: discountPaise,
           shipping_paise: shippingPaise, total_paise: totalPaise,
+          gst_paise: gstPaise, compliance: compliance ? clone(compliance) : null,
           promo_code: promotion?.code || null, customer_name: shippingAddress.name,
           customer_email: user.email || "", customer_phone: shippingAddress.phone,
           shipping_address: clone(shippingAddress), payment_method: paymentMethod,

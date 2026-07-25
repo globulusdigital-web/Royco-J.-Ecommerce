@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ApiError } from "./http.mjs";
+import { DEFAULT_STORE_SETTINGS, mergeStoreSettings } from "./commerce-rules.mjs";
 import {
   serializeAppointment,
   serializeOrder,
@@ -46,7 +47,7 @@ export function createDatabaseRepository(db) {
     return orderRows.map((order) => serializeOrder(order, itemMap.get(String(order.id)) || []));
   }
 
-  async function calculateQuote(database, items, couponCode, { lock = false } = {}) {
+  async function calculateQuote(database, items, couponCode, { lock = false, gstRate = 0 } = {}) {
     const productIds = items.map((item) => item.productId);
     const productResult = await database.query(
       `SELECT * FROM products WHERE id = ANY($1::int[])${lock ? " FOR UPDATE" : ""}`,
@@ -91,13 +92,15 @@ export function createDatabaseRepository(db) {
     }
 
     const shippingPaise = subtotalPaise - discountPaise >= 5_000_000 ? 0 : 49_900;
+    const gstPaise = Math.round((subtotalPaise - discountPaise) * Number(gstRate || 0) / 100);
     return {
       products,
       promotion,
       subtotalPaise,
       discountPaise,
       shippingPaise,
-      totalPaise: subtotalPaise - discountPaise + shippingPaise,
+      gstPaise,
+      totalPaise: subtotalPaise - discountPaise + shippingPaise + gstPaise,
     };
   }
 
@@ -117,6 +120,52 @@ export function createDatabaseRepository(db) {
 
     async getUserById(id) {
       const result = await query("SELECT * FROM users WHERE id = $1 AND active = TRUE LIMIT 1", [id]);
+      return resultRows(result)[0] || null;
+    },
+
+    async getStoreSettings() {
+      const result = await query("SELECT settings FROM store_settings WHERE id = 'primary' LIMIT 1");
+      return resultRows(result)[0]?.settings || DEFAULT_STORE_SETTINGS;
+    },
+
+    async updateStoreSettings(patch) {
+      const currentResult = await query("SELECT settings FROM store_settings WHERE id = 'primary' LIMIT 1");
+      const settings = mergeStoreSettings(resultRows(currentResult)[0]?.settings || DEFAULT_STORE_SETTINGS, patch);
+      const result = await query(
+        `INSERT INTO store_settings (id, settings, updated_at) VALUES ('primary', $1::jsonb, NOW())
+         ON CONFLICT (id) DO UPDATE SET settings = EXCLUDED.settings, updated_at = NOW() RETURNING settings`,
+        [JSON.stringify(settings)],
+      );
+      return resultRows(result)[0]?.settings || settings;
+    },
+
+    async recentCustomerOrderTotal(userId, sinceIso) {
+      const result = await query(
+        "SELECT COALESCE(SUM(total_paise), 0)::bigint AS total FROM orders WHERE user_id = $1 AND status <> 'cancelled' AND created_at >= $2",
+        [userId, sinceIso],
+      );
+      return Number(resultRows(result)[0]?.total || 0);
+    },
+
+    async createComplianceReview({ orderId, userId, documentType, panNumber, form60Declaration, phone, combinedTotalPaise }) {
+      const result = await query(
+        `INSERT INTO compliance_reviews
+          (id, order_id, user_id, document_type, pan_number, form60_declaration, phone, combined_total_paise)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+        [randomUUID(), orderId, userId, documentType, panNumber || null, form60Declaration || null, phone, combinedTotalPaise],
+      );
+      return resultRows(result)[0];
+    },
+
+    async listComplianceReviews() {
+      return resultRows(await query("SELECT * FROM compliance_reviews ORDER BY created_at DESC LIMIT 1000"));
+    },
+
+    async updateComplianceReview(id, status, adminNotes = "") {
+      const result = await query(
+        "UPDATE compliance_reviews SET status=$2, admin_notes=$3, updated_at=NOW() WHERE id=$1 RETURNING *",
+        [id, status, adminNotes],
+      );
       return resultRows(result)[0] || null;
     },
 
@@ -238,13 +287,16 @@ export function createDatabaseRepository(db) {
       const result = await query(
         `INSERT INTO products
           (sku, slug, name, bengali_name, description, material, category, purity, weight_grams,
+           pricing_mode, making_charge_type, making_charge_value, carat_weight, diamond_tier,
            price_paise, compare_at_price_paise, stock, image_url, gallery, featured, active)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+           $15, $16, $17, $18, $19::jsonb, $20, $21)
          RETURNING *`,
         [product.sku, product.slug, product.name, product.bengaliName, product.description,
-          product.material, product.category, product.purity, product.weightG, product.pricePaise,
-          product.compareAtPricePaise, product.stock, product.imageUrl, JSON.stringify(product.gallery),
-          product.featured, product.active],
+          product.material, product.category, product.purity, product.weightG, product.pricingMode,
+          product.makingChargeType, product.makingChargeValue, product.caratWeight, product.diamondTier,
+          product.pricePaise, product.compareAtPricePaise, product.stock, product.imageUrl,
+          JSON.stringify(product.gallery), product.featured, product.active],
       );
       return serializeProduct(resultRows(result)[0]);
     },
@@ -253,15 +305,17 @@ export function createDatabaseRepository(db) {
       const result = await query(
         `UPDATE products SET
            sku = $2, slug = $3, name = $4, bengali_name = $5, description = $6, material = $7,
-           category = $8, purity = $9, weight_grams = $10, price_paise = $11,
-           compare_at_price_paise = $12, stock = $13, image_url = $14, gallery = $15::jsonb,
-           featured = $16, active = $17, updated_at = NOW()
+           category = $8, purity = $9, weight_grams = $10, pricing_mode = $11,
+           making_charge_type = $12, making_charge_value = $13, carat_weight = $14, diamond_tier = $15,
+           price_paise = $16, compare_at_price_paise = $17, stock = $18, image_url = $19,
+           gallery = $20::jsonb, featured = $21, active = $22, updated_at = NOW()
          WHERE id = $1
          RETURNING *`,
         [id, product.sku, product.slug, product.name, product.bengaliName, product.description,
-          product.material, product.category, product.purity, product.weightG, product.pricePaise,
-          product.compareAtPricePaise, product.stock, product.imageUrl, JSON.stringify(product.gallery),
-          product.featured, product.active],
+          product.material, product.category, product.purity, product.weightG, product.pricingMode,
+          product.makingChargeType, product.makingChargeValue, product.caratWeight, product.diamondTier,
+          product.pricePaise, product.compareAtPricePaise, product.stock, product.imageUrl,
+          JSON.stringify(product.gallery), product.featured, product.active],
       );
       return serializeProduct(resultRows(result)[0]);
     },
@@ -313,12 +367,13 @@ export function createDatabaseRepository(db) {
       return rowCount(result) > 0;
     },
 
-    async quoteCheckout({ items, couponCode }) {
-      const quote = await calculateQuote(pool, items, couponCode);
+    async quoteCheckout({ items, couponCode, gstRate = 0 }) {
+      const quote = await calculateQuote(pool, items, couponCode, { gstRate });
       return {
         subtotalPaise: quote.subtotalPaise,
         discountPaise: quote.discountPaise,
         shippingPaise: quote.shippingPaise,
+        gstPaise: quote.gstPaise,
         totalPaise: quote.totalPaise,
         promoCode: quote.promotion?.code || null,
       };
@@ -364,13 +419,15 @@ export function createDatabaseRepository(db) {
       return resultRows(result).map((row) => row.scheduled_at);
     },
 
-    async createAppointment({ id, user, service, scheduledAt, language, notes }) {
+    async createAppointment({ id, user, service, scheduledAt, language, notes, providerType = "astrologer", specialist = "First available", consultationMode = "in_person", customerEmail = "" }) {
       const result = await query(
         `INSERT INTO appointments
-          (id, user_id, customer_name, customer_phone, service, scheduled_at, language, notes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          (id, user_id, customer_name, customer_phone, customer_email, provider_type, specialist,
+           consultation_mode, service, scheduled_at, language, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *`,
-        [id, user.id, user.name, user.phone, service, scheduledAt, language, notes],
+        [id, user.id, user.name, user.phone, customerEmail || user.email || "", providerType, specialist,
+          consultationMode, service, scheduledAt, language, notes],
       );
       return serializeAppointment(resultRows(result)[0]);
     },
@@ -404,6 +461,9 @@ export function createDatabaseRepository(db) {
       couponCode,
       paymentMethod,
       shippingAddress,
+      gstRate = 0,
+      compliance = null,
+      orderStatus = "pending",
       razorpayOrderId = null,
       razorpayPaymentId = null,
       now = new Date(),
@@ -411,7 +471,7 @@ export function createDatabaseRepository(db) {
       const client = await pool.connect();
       try {
         await client.query("BEGIN");
-        const quote = await calculateQuote(client, items, couponCode, { lock: true });
+        const quote = await calculateQuote(client, items, couponCode, { lock: true, gstRate });
         const {
           products, promotion, subtotalPaise, discountPaise, shippingPaise, totalPaise,
         } = quote;
@@ -429,6 +489,11 @@ export function createDatabaseRepository(db) {
             JSON.stringify(shippingAddress), paymentMethod, paymentMethod === "razorpay" ? "paid" : "pending",
             razorpayOrderId, razorpayPaymentId, shippingAddress.instructions || ""],
         );
+        if (orderStatus !== "pending") {
+          await client.query("UPDATE orders SET status = $2, updated_at = NOW() WHERE id = $1", [orderId, orderStatus]);
+          resultRows(orderResult)[0].status = orderStatus;
+          resultRows(orderResult)[0].compliance = compliance;
+        }
 
         const itemRows = [];
         for (const item of items) {

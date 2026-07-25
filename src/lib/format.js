@@ -21,6 +21,8 @@ export function normalizeProduct(product) {
     compareAtPrice: Number(product.compareAtPrice ?? product.compare_at_price ?? product.compare_at ?? 0),
     price: Number(product.price ?? 0),
     weightG: Number(product.weightG ?? product.weight_g ?? 0),
+    makingChargeValue: Number(product.makingChargeValue ?? product.making_charge_value ?? 0),
+    caratWeight: Number(product.caratWeight ?? product.carat_weight ?? 0),
     stock: Number(product.stock ?? 0),
     featured: Boolean(product.featured),
     active: product.active !== false,
@@ -28,4 +30,4 @@ export function normalizeProduct(product) {
 }
 
 export const orderStatusLabel = (status) =>
-  ({ pending: "Pending", confirmed: "Confirmed", processing: "Crafting", shipped: "Shipped", delivered: "Delivered", cancelled: "Cancelled" })[status] || status;
+  ({ pending: "Pending", pending_verification: "Pending verification", confirmed: "Confirmed", processing: "Crafting", shipped: "Shipped", delivered: "Delivered", cancelled: "Cancelled" })[status] || status;
